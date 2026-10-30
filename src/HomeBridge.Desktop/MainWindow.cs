@@ -7,12 +7,14 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Threading.Tasks;
 
 namespace HomeBridge.Desktop;
 
 public sealed class MainWindow : Window
 {
     private readonly List<string> _files = new();
+    private readonly AppSettings _settings = AppSettings.Load();
     private readonly TextBox _find = new() { MinWidth = 120 };
     private readonly TextBox _replace = new() { MinWidth = 120 };
     private readonly TextBox _prefix = new() { MinWidth = 120 };
@@ -32,7 +34,8 @@ public sealed class MainWindow : Window
         tabs.Items.Add(Tab("Overview", Overview()));
         tabs.Items.Add(Tab("Bulk Rename", RenamePage()));
         tabs.Items.Add(Tab("Application Launcher", AppPage()));
-        tabs.Items.Add(Tab("Devices", Pending("Device discovery and secure pairing")));
+        tabs.Items.Add(Tab("Devices", DevicesPage()));
+        tabs.Items.Add(Tab("Settings", SettingsPage()));
         tabs.Items.Add(Tab("Files", Pending("Authenticated file sharing and transfers")));
         tabs.Items.Add(Tab("Screen", Pending("Low-latency screen streaming and optional remote input")));
         tabs.Items.Add(Tab("Roku Media", Pending("DLNA background media service")));
@@ -114,6 +117,46 @@ public sealed class MainWindow : Window
         _files.AddRange(_lastBatch.Select(p => p.Original));
         _lastBatch = Array.Empty<RenamePlan>();
         RefreshPreview();
+    }
+    private UIElement SettingsPage()
+    {
+        var panel = new StackPanel { Margin = new Thickness(24) };
+        panel.Children.Add(Label("Computer display name"));
+        var name = new TextBox { Text = _settings.DisplayName, MaxWidth = 400, HorizontalAlignment = HorizontalAlignment.Left };
+        panel.Children.Add(name);
+        panel.Children.Add(Label("Settings are stored for your Windows account in LocalAppData\\HomeBridge."));
+        panel.Children.Add(Action("Save settings", () => {
+            _settings.DisplayName = name.Text.Trim();
+            _settings.Save();
+            MessageBox.Show("Saved. Restart the discovery service to update its advertised name.");
+        }));
+        panel.Children.Add(Label("This build only discovers PCs. Pairing and remote access remain disabled."));
+        return panel;
+    }
+    private UIElement DevicesPage()
+    {
+        var panel = new StackPanel { Margin = new Thickness(24) };
+        panel.Children.Add(Label("Nearby HomeBridge computers — discovery only, not paired"));
+        var results = new ListBox { MinHeight = 250 };
+        panel.Children.Add(Action("Scan network", () => {
+            results.Items.Clear();
+            results.Items.Add("Scanning your local network…");
+            _ = Task.Run(async () => {
+                try {
+                    var computers = await DeviceDiscovery.ScanAsync(TimeSpan.FromSeconds(3));
+                    await Dispatcher.InvokeAsync(() => {
+                        results.Items.Clear();
+                        foreach (var computer in computers) results.Items.Add(computer);
+                        if (computers.Count == 0) results.Items.Add("No devices found. Check the service and Private network firewall.");
+                    });
+                } catch (Exception ex) {
+                    await Dispatcher.InvokeAsync(() => { results.Items.Clear(); results.Items.Add(ex.Message); });
+                }
+            });
+        }));
+        panel.Children.Add(results);
+        panel.Children.Add(Label("No remote commands or files are exposed by discovery. Secure pairing is the next milestone."));
+        return panel;
     }
     private UIElement AppPage()
     {

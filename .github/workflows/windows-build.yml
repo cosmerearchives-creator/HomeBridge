@@ -20,6 +20,8 @@ jobs:
         run: dotnet build HomeBridge.slnx -c Release --no-restore
       - name: Publish standalone executable
         run: dotnet publish src/HomeBridge.Desktop/HomeBridge.Desktop.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o publish
+      - name: Publish background service
+        run: dotnet publish src/HomeBridge.Service/HomeBridge.Service.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o publish-service
       - name: Install Inno Setup
         run: choco install innosetup --yes --no-progress
       - name: Create installer

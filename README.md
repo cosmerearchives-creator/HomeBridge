@@ -10,13 +10,14 @@ HomeBridge makes useful Windows and local-network tools easier to operate.
 | --- | --- |
 | Local bulk rename | Functional preview, apply, in-session undo; files only |
 | Local application launcher | Functional while app is open; registrations are not persisted |
-| Device discovery and pairing | Migration pending |
+| Device discovery | Implemented (local broadcast, unauthenticated device names only)
+| Device pairing | Migration pending |
 | File sharing and transfers | Migration pending |
 | Screen mirroring and remote control | Migration pending |
 | Roku DLNA server | Migration pending |
 | Android companion | Existing Kotlin prototype remains separate; integration pending |
 
-No network listener, file server, remote execution endpoint, or Windows background service is installed by this early native build.
+The installer now registers HomeBridgeDiscovery, a minimal Windows service that responds to local discovery requests. It does not expose files, remote execution, pairing, or any management API. Discovery is informational only and must not be treated as authenticated identity. The GUI saves user settings in LocalAppData.
 
 ## Build
 
@@ -48,3 +49,9 @@ Do not publish previous HomeBridge access tokens, certificate private keys, pair
 7. Signed installers, automatic update checks, package verification and rollback.
 
 Developed for Windows 11; Roku and Android support will be migrated in stages.
+
+## Discovery service
+
+The installer registers `HomeBridgeDiscovery` using Windows Service Control Manager. It responds to UDP broadcast requests on port 45679 with the computer name; it has no remote action endpoint. Windows Firewall may block incoming discovery traffic; allow UDP 45679 only on trusted Private profiles as needed. Do not forward this port on your router. You can check the service in `services.msc`.
+
+**Security milestone still pending:** authenticated pairing with unique device credentials and verification codes. Never authorize file or command execution merely because a device appeared in discovery.

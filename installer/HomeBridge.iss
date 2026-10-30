@@ -22,4 +22,9 @@ Name: "{autodesktop}\HomeBridge"; Filename: "{app}\HomeBridge.exe"; Tasks: deskt
 [Tasks]
 Name: desktopicon; Description: "Create a desktop shortcut"; Flags: unchecked
 [Run]
+Filename: "{sys}\\WindowsPowerShell\\v1.0\\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\\install-service.ps1"""; Flags: runhidden waituntilterminated
 Filename: "{app}\HomeBridge.exe"; Description: "Launch HomeBridge"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+Filename: "{sys}\\sc.exe"; Parameters: "stop HomeBridgeDiscovery"; Flags: runhidden waituntilterminated
+Filename: "{sys}\\sc.exe"; Parameters: "delete HomeBridgeDiscovery"; Flags: runhidden waituntilterminated
