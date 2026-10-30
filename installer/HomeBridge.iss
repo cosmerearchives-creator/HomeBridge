@@ -17,6 +17,8 @@ PrivilegesRequired=admin
 UninstallDisplayIcon={app}\HomeBridge.exe
 [Files]
 Source: "..\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+[InstallDelete]
+Type: files; Name: "{app}\install-service.ps1"
 [Icons]
 Name: "{autoprograms}\HomeBridge"; Filename: "{app}\HomeBridge.exe"
 Name: "{autodesktop}\HomeBridge"; Filename: "{app}\HomeBridge.exe"; Tasks: desktopicon
@@ -41,27 +43,27 @@ function ControlService(Service: THandle; Control: LongWord; var Status: TServic
   external 'ControlService@advapi32.dll stdcall';
 function CloseServiceHandle(Handle: THandle): Boolean;
   external 'CloseServiceHandle@advapi32.dll stdcall';
-var HadService: Boolean;
+var HadService, HadLegacyService: Boolean;
 
 function ServiceMissing: Boolean;
 begin
   Result := not RegKeyExists(HKLM, 'SYSTEM\CurrentControlSet\Services\HomeBridge');
 end;
 
-function OwnsService: Boolean;
+function OwnsService(Name: string): Boolean;
 var Image: string;
 begin
-  Result := RegQueryStringValue(HKLM, 'SYSTEM\CurrentControlSet\Services\HomeBridge', 'ImagePath', Image) and
+  Result := RegQueryStringValue(HKLM, 'SYSTEM\CurrentControlSet\Services\' + Name, 'ImagePath', Image) and
     (CompareText(Image, '"' + ExpandConstant('{app}\service\HomeBridge.Service.exe') + '"') = 0);
 end;
 
-function StopAndWait: Boolean;
+function StopAndWait(Name: string): Boolean;
 var Manager, Service: THandle; Status: TServiceStatus; I: Integer;
 begin
   Result := False;
   Manager := OpenSCManager(0, 0, 1);
   if Manager = 0 then exit;
-  Service := OpenService(Manager, 'HomeBridge', $24);
+  Service := OpenService(Manager, Name, $24);
   if Service <> 0 then begin
     if QueryServiceStatus(Service, Status) then begin
       if Status.CurrentState <> 1 then ControlService(Service, 1, Status);
@@ -88,30 +90,36 @@ function PrepareToInstall(var NeedsRestart: Boolean): string;
 begin
   Result := '';
   HadService := not ServiceMissing;
-  if (HadService or WizardIsTaskSelected('backgroundservice')) and
+  HadLegacyService := RegKeyExists(HKLM, 'SYSTEM\CurrentControlSet\Services\HomeBridgeDiscovery');
+  if (HadService or HadLegacyService or WizardIsTaskSelected('backgroundservice')) and
       (CompareText(ExpandConstant('{app}'), ExpandConstant('{autopf}\HomeBridge')) <> 0) then begin
     Result := 'The service requires the protected default Program Files\HomeBridge location.'; exit;
   end;
   if HadService then begin
-    if not OwnsService then Result := 'An unrelated HomeBridge service exists. Resolve that service before installing.'
-    else if not StopAndWait then Result := 'HomeBridge service did not stop. Stop it in Services and retry.';
+    if not OwnsService('HomeBridge') then Result := 'An unrelated HomeBridge service exists. Resolve that service before installing.'
+    else if not StopAndWait('HomeBridge') then Result := 'HomeBridge service did not stop. Stop it in Services and retry.';
+  end;
+  if (Result = '') and HadLegacyService then begin
+    if not OwnsService('HomeBridgeDiscovery') then Result := 'An unrelated HomeBridgeDiscovery service exists. Resolve it before installing.'
+    else if not StopAndWait('HomeBridgeDiscovery') then Result := 'Legacy discovery service did not stop. Stop it in Services and retry.';
   end;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then begin
-    if WizardIsTaskSelected('backgroundservice') and ServiceMissing then
+    if HadLegacyService then RunSC('delete HomeBridgeDiscovery');
+    if (HadLegacyService or WizardIsTaskSelected('backgroundservice')) and ServiceMissing then
       RunSC('create HomeBridge binPath= "\"' + ExpandConstant('{app}\service\HomeBridge.Service.exe') + '\"" start= auto obj= "NT AUTHORITY\LocalService"');
-    if HadService or WizardIsTaskSelected('backgroundservice') then RunSC('start HomeBridge');
+    if HadService or HadLegacyService or WizardIsTaskSelected('backgroundservice') then RunSC('start HomeBridge');
   end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if (CurUninstallStep = usUninstall) and not ServiceMissing then begin
-    if not OwnsService then RaiseException('Refusing to remove an unrelated HomeBridge service.');
-    if not StopAndWait then RaiseException('HomeBridge service did not stop. Stop it in Services and retry uninstall.');
+    if not OwnsService('HomeBridge') then RaiseException('Refusing to remove an unrelated HomeBridge service.');
+    if not StopAndWait('HomeBridge') then RaiseException('HomeBridge service did not stop. Stop it in Services and retry uninstall.');
     RunSC('delete HomeBridge');
   end;
 end;

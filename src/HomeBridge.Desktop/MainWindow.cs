@@ -55,6 +55,7 @@ public sealed class MainWindow : Window
         tabs.Items.Add(Tab("Bulk Rename", RenamePage()));
         tabs.Items.Add(Tab("Application Launcher", AppPage()));
         tabs.Items.Add(Tab("Devices", DevicesPage()));
+        tabs.Items.Add(Tab("Settings", SettingsPage()));
         tabs.Items.Add(Tab("Files", Pending("Authenticated file sharing and transfers")));
         tabs.Items.Add(Tab("Screen", Pending("Low-latency screen streaming and optional remote input")));
         tabs.Items.Add(Tab("Roku Media", Pending("DLNA background media service")));
@@ -189,6 +190,23 @@ public sealed class MainWindow : Window
     {
         lock (_settings) _trusted.ItemsSource = _settings.Peers.ToList();
         _trusted.DisplayMemberPath = nameof(TrustedPeer.Name);
+    }
+    private UIElement SettingsPage()
+    {
+        var page = new StackPanel { Margin = new Thickness(24) };
+        var name = new TextBox { Text = _settings.DeviceName, MaxLength = 80, MaxWidth = 400, HorizontalAlignment = HorizontalAlignment.Left };
+        page.Children.Add(Label("Computer display name")); page.Children.Add(name);
+        page.Children.Add(Action("Save settings", () => {
+            var value = name.Text.Trim();
+            if (string.IsNullOrWhiteSpace(value)) throw new InvalidDataException("Enter a computer display name.");
+            lock (_settings) {
+                var previous = _settings.DeviceName; _settings.DeviceName = value;
+                try { _store.Save(_settings); } catch { _settings.DeviceName = previous; throw; }
+            }
+            MessageBox.Show("Saved. Disable and enable networking to update discovery advertisements.");
+        }));
+        page.Children.Add(Label("Settings are stored for your Windows account in LocalAppData\\HomeBridge."));
+        return page;
     }
     private UIElement DevicesPage()
     {

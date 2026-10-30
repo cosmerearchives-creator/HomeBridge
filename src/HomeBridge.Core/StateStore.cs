@@ -38,9 +38,20 @@ public sealed class StateStore
         {
             var path = Path.Combine(DirectoryPath, "settings.json");
             if (!File.Exists(path)) return new();
-            var settings = JsonSerializer.Deserialize<UserSettings>(File.ReadAllBytes(path)) ?? throw new InvalidDataException("Empty settings.");
+            var bytes = File.ReadAllBytes(path);
+            using var document = JsonDocument.Parse(bytes);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) throw new InvalidDataException("Settings must be an object.");
+            var settings = JsonSerializer.Deserialize<UserSettings>(bytes) ?? throw new InvalidDataException("Empty settings.");
+            // Upgrade the initial DisplayName-only native preview without losing its saved name.
+            if (!document.RootElement.TryGetProperty("Version", out _) && document.RootElement.TryGetProperty("DisplayName", out var legacyName))
+                settings.DeviceName = legacyName.GetString() ?? throw new InvalidDataException("Invalid saved display name.");
+            else if (!document.RootElement.TryGetProperty("Version", out _)) throw new InvalidDataException("Settings version is missing.");
             if (settings.Version != 1 || settings.Applications is null || settings.Peers is null || string.IsNullOrWhiteSpace(settings.DeviceName))
                 throw new InvalidDataException("Unsupported or damaged settings. Back up settings.json before repairing it; trust will not be silently reset.");
+            if (settings.DeviceName.Length > 80) throw new InvalidDataException("Device name exceeds 80 characters.");
+            if (settings.Peers.Any(p => p is null || p.Fingerprint is null || p.Fingerprint.Length != 64 || !p.Fingerprint.All(Uri.IsHexDigit) || p.Name is null || p.Name.Length > 80) ||
+                settings.Applications.Any(a => a is null || a.Name is null || a.Path is null || !Path.IsPathFullyQualified(a.Path) || !a.Path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidDataException("Invalid saved application or peer.");
             return settings;
         }
     }

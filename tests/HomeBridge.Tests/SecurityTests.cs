@@ -81,6 +81,13 @@ public sealed class SecurityTests
         File.WriteAllText(plan[0].Destination, "occupied"); Assert.Throws<IOException>(() => RenameEngine.Preview([path], new("report", "final", "", "-v2")));
         Assert.Equal("occupied", File.ReadAllText(plan[0].Destination));
     }
+    [Fact] public void InitialPreviewDisplayNameMigratesWithoutResettingIt()
+    {
+        using var scratch = new Scratch(); var store = new StateStore(scratch.Path);
+        File.WriteAllText(System.IO.Path.Combine(scratch.Path, "settings.json"), "{\"DisplayName\":\"My living room PC\"}");
+        var settings = store.Load(); Assert.Equal("My living room PC", settings.DeviceName);
+        store.Save(settings); Assert.Equal("My living room PC", store.Load().DeviceName);
+    }
     [Fact] public void RenameRollsBackWhenLaterTargetAppears()
     {
         using var scratch = new Scratch();

@@ -16,10 +16,13 @@ try {
         $status = [System.Text.Encoding]::UTF8.GetString($bytes, 0, $count)
         if ($status -notmatch 'network=disabled; commands=none') { throw 'Invalid service status' }
     } finally { $pipe.Dispose() }
+    # Emulate the previous preview's stopped discovery service to verify safe migration.
+    New-Service -Name HomeBridgeDiscovery -BinaryPathName $service.PathName -StartupType Manual | Out-Null
     # Verify upgrade can stop, replace and restart an already installed worker.
     $upgrade = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/TASKS=backgroundservice' -Wait -PassThru -WindowStyle Hidden
     if ($upgrade.ExitCode -ne 0) { throw "Upgrade failed: $($upgrade.ExitCode)" }
     (Get-Service HomeBridge).WaitForStatus('Running', [TimeSpan]::FromSeconds(15))
+    if (Get-Service HomeBridgeDiscovery -ErrorAction SilentlyContinue) { throw 'Legacy discovery service was not removed' }
 } finally {
     $uninstaller = Join-Path $env:ProgramFiles 'HomeBridge\unins000.exe'
     $remove = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru -WindowStyle Hidden
