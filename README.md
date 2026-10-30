@@ -55,3 +55,11 @@ Developed for Windows 11; Roku and Android support will be migrated in stages.
 The installer registers `HomeBridgeDiscovery` using Windows Service Control Manager. It responds to UDP broadcast requests on port 45679 with the computer name; it has no remote action endpoint. Windows Firewall may block incoming discovery traffic; allow UDP 45679 only on trusted Private profiles as needed. Do not forward this port on your router. You can check the service in `services.msc`.
 
 **Security milestone still pending:** authenticated pairing with unique device credentials and verification codes. Never authorize file or command execution merely because a device appeared in discovery.
+
+## Download a native Windows installer
+
+**Latest experimental native preview:** https://github.com/cosmerearchives-creator/HomeBridge/releases/tag/native-preview
+
+**Direct installer:** https://github.com/cosmerearchives-creator/HomeBridge/releases/download/native-preview/HomeBridge-Setup.exe
+
+The Windows installer GitHub Actions workflow uploads its normal artifact and, on successful pushes to `main`, publishes or replaces the downloadable installer asset in the rolling `native-preview` prerelease. Pull requests do not publish releases. For now this is distribution only; automatic in-app updates and installer signing have not been implemented. Browser security prompts may appear for an unsigned installer. Install only if you trust this repository and the build. The native application does not yet include all Python-era modules.

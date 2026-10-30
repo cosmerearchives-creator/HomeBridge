@@ -5,7 +5,7 @@ on:
   pull_request:
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 jobs:
   build:
     runs-on: windows-latest
@@ -33,3 +33,22 @@ jobs:
         with:
           name: HomeBridge-Windows-Installer
           path: artifacts/HomeBridge-Setup.exe
+
+      - name: Publish rolling preview release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "native-preview"
+          $asset = "artifacts/HomeBridge-Setup.exe"
+          if (-not (Test-Path $asset)) { throw "Installer missing: $asset" }
+          $notes = "Experimental .NET 10 Windows build from commit $env:GITHUB_SHA. This is not feature-complete and does not auto-update yet. The native build currently includes local Bulk Rename, local Application Launcher, persistent settings, and LAN discovery service."
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag $asset --repo $env:GITHUB_REPOSITORY --title "HomeBridge Native Preview" --notes $notes --prerelease --target $env:GITHUB_SHA
+          } else {
+            gh release upload $tag $asset --repo $env:GITHUB_REPOSITORY --clobber
+            gh release edit $tag --repo $env:GITHUB_REPOSITORY --notes $notes --prerelease
+          }
