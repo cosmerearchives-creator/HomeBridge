@@ -1,40 +1,45 @@
-using System;
-using System.Net;
-using System.Net.Sockets;
+using System.IO.Pipes;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 var builder = Host.CreateApplicationBuilder(args);
-builder.Services.AddWindowsService(options => options.ServiceName = "HomeBridgeDiscovery");
-builder.Services.AddHostedService<DiscoveryWorker>();
+builder.Services.AddWindowsService(options => options.ServiceName = "HomeBridge");
+builder.Services.AddHostedService<StatusWorker>();
 await builder.Build().RunAsync();
 
-sealed class DiscoveryWorker(ILogger<DiscoveryWorker> logger) : BackgroundService
+// LocalService, no network sockets, user paths, plugins, shell execution or impersonation.
+// Status is informational only. It must never authorize a desktop operation.
+sealed class StatusWorker(ILogger<StatusWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var udp = new UdpClient(new IPEndPoint(IPAddress.Any, 45679));
-        logger.LogInformation("HomeBridge discovery service listening");
+        var acl = new PipeSecurity();
+        acl.SetAccessRuleProtection(true, false);
+        acl.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.NetworkSid, null), PipeAccessRights.FullControl, AccessControlType.Deny));
+        foreach (var type in new[] { WellKnownSidType.LocalServiceSid, WellKnownSidType.LocalSystemSid, WellKnownSidType.BuiltinAdministratorsSid })
+            acl.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(type, null), PipeAccessRights.FullControl, AccessControlType.Allow));
+        acl.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.InteractiveSid, null), PipeAccessRights.Read | PipeAccessRights.Synchronize, AccessControlType.Allow));
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                var incoming = await udp.ReceiveAsync(stoppingToken);
-                if (Encoding.ASCII.GetString(incoming.Buffer) != "HOMEBRIDGE_DISCOVER_V1") continue;
-                if (!IsPrivate(incoming.RemoteEndPoint.Address)) continue;
-                var payload = Encoding.UTF8.GetBytes("HOMEBRIDGE_HERE_V1:" + Environment.MachineName);
-                await udp.SendAsync(payload, incoming.RemoteEndPoint, stoppingToken);
+                using var pipe = NamedPipeServerStreamAcl.Create("HomeBridge.Status.v1", PipeDirection.Out, 1,
+                    PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.FirstPipeInstance, 0, 1024, acl);
+                await pipe.WaitForConnectionAsync(stoppingToken);
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                timeout.CancelAfter(TimeSpan.FromSeconds(2));
+                await pipe.WriteAsync(Encoding.UTF8.GetBytes("HomeBridge service v1: running; network=disabled; commands=none\n"), timeout.Token);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
-            catch (Exception ex) { logger.LogWarning(ex, "Discovery request failed"); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or OperationCanceledException)
+            {
+                logger.LogWarning("Local status pipe unavailable ({ErrorType}); retrying.", ex.GetType().Name);
+                try { await Task.Delay(1000, stoppingToken); } catch (OperationCanceledException) { break; }
+            }
         }
-    }
-    private static bool IsPrivate(IPAddress ip)
-    {
-        var b = ip.GetAddressBytes();
-        if (b.Length != 4) return false;
-        return b[0] == 10 || b[0] == 192 && b[1] == 168 || b[0] == 172 && b[1] >= 16 && b[1] <= 31;
     }
 }
