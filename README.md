@@ -1,6 +1,6 @@
 # HomeBridge — native Windows rebuild
 
-.NET 10 / WPF preview, **1.0.0-alpha.2**. Windows 11 x64 is the target.
+.NET 10 / WPF preview, **1.0.0-alpha.3**. Windows 11 x64 is the target.
 
 | Module | Status |
 | --- | --- |
@@ -9,6 +9,7 @@
 | Persistent settings | Atomic per-user JSON; DPAPI-protected identity |
 | Devices | Opt-in IPv4 LAN discovery, invitation pairing, mutually authenticated status checks |
 | Windows service | Optional LocalService worker; local read-only status pipe |
+| Updates | Automatic startup checks; verified in-app installer download and user-approved upgrade |
 | Files, Screen, Roku DLNA, remote launch, Android integration | Pending; no endpoints provided |
 
 Networking is off on every desktop launch. The optional service has no TCP/UDP listener and never runs desktop tools.
@@ -53,7 +54,7 @@ Limitations:
 - Binding is on all IPv4 interfaces; peer addresses are filtered. A private source address does not prove a trusted network. Restrict firewall access to Private profiles and trusted interfaces.
 - Same-user malware and administrators are outside the threat model. DPAPI protects stored key material, not a compromised logged-in account. Schannel uses a temporary per-user key container while the certificate is loaded; it is not hardware-backed.
 - Invitations are bearer secrets. Anyone who obtains a live invitation can pair. No six-digit codes, remote execution, file sharing, remote input, password authentication or automatic firewall rules exist.
-- No independent security audit, automated certificate rotation, signed installer, automatic updates or Android companion implementation in this phase.
+- No independent security audit, automated certificate rotation, signed installer, automatic rollback or Android companion implementation in this phase.
 - Automated tests cover loopback TLS and disposable-runner service lifecycle. Real two-PC firewall, adapter and interactive UI behavior still require manual checks.
 
 ## Build and installer
@@ -69,5 +70,21 @@ dotnet run --project src/HomeBridge.Desktop/HomeBridge.Desktop.csproj
 GitHub Actions **Windows installer** builds/tests on Windows, publishes self-contained Win-x64 desktop/service binaries, packages with Inno Setup, and checks service installation, account, quoted path, status, upgrade and uninstall on its disposable runner. Download `HomeBridge-Windows-Installer` from a successful run; `HomeBridge-Test-Results` contains test results. Do not run `tests/Service-Smoke.ps1` on a PC with an existing HomeBridge installation: it installs, upgrades and removes the program.
 
 Before a release, manually verify two-PC discovery/pair/authentication/revocation, firewall refusal, restart persistence, local EXE launch, rename preview/apply/undo, optional-service installation and upgrade/uninstall on Windows 11. Only launch EXEs you trust. Never commit tokens, private keys or user state.
+
+## Automatic updates
+
+Install alpha.3 once manually to obtain the updater; older builds cannot update themselves. In **Settings**, automatic checks on startup and preview releases are enabled by default and can be disabled separately. **Check for updates** works on demand. Checks contact the fixed HomeBridge GitHub Releases API over HTTPS, independently of LAN networking; settings, device credentials and files are never uploaded. Offline/rate-limit failures leave the installed app alone and appear in Settings.
+
+When a newer release is available, the app notifies you. **Download and install update** downloads the installer, verifies its exact size and GitHub-provided SHA-256 digest, and starts the normal installer. Installation requires your confirmation and the Windows administrator approval prompt. The app closes, so in-session rename undo is lost; saved settings, launcher entries and paired identities remain. Reopen HomeBridge from the installer or Start menu after upgrading. Downloads and installations do not happen silently in the background.
+
+Only the exact `HomeBridge-Setup.exe` asset from `cosmerearchives-creator/HomeBridge` releases is accepted. Redirects are restricted to GitHub and its release-asset host over HTTPS. Missing digests, altered/incomplete/oversized downloads, untrusted redirects, same versions and older versions are rejected. Candidate selection uses semantic versions across the latest 20 release records, with drafts excluded and preview filtering respected. Update checks have a 15-second deadline; downloads are limited to 300 MiB and ten minutes. Verified files remain locked against modification through installer launch. Failed downloads are deleted; successful installers are retained under `%LOCALAPPDATA%\HomeBridge\Updates` and may be removed when no installation is running.
+
+The update trust root is GitHub HTTPS plus control of this repository and its release assets. SHA-256 protects against download corruption/substitution relative to the API digest; it does not provide an independent publisher signature if the GitHub account/repository is compromised. Installers are currently unsigned, so Windows may display an unknown-publisher warning. There is no automatic rollback, silent elevation, certificate-based publisher signing, or privilege-bearing update endpoint in the service. Manual older-installer installation is outside the updater's downgrade checks.
+
+### Publishing updates
+
+After merging and reviewing a version, keep the desktop project Version and installer MyAppVersion equal, commit the changes, then push a matching `v` tag (for example `v1.0.0-alpha.3`). The Windows workflow validates the tag/version, runs all tests and service lifecycle checks, creates the installer, and only then publishes it through a release job with repository write permission. Tags containing a hyphen produce prereleases. Normal branch and PR builds only upload build artifacts and do not publish updates. Existing releases are not overwritten by reruns; resolve a failed or incomplete release explicitly.
+
+No release existed when this updater was added. Until a matching tagged release is published, checks correctly report no newer release. The updater's network policy and verification are tested with controlled HTTP responses; a real published-release download and interactive UAC cancellation/upgrade should also be tested before broad distribution.
 
 Upgrading the initial discovery preview migrates its saved DisplayName. A recognized HomeBridgeDiscovery service at the protected application path is stopped and removed, and replaced with the LocalService status worker. Its old UDP 45679 protocol is retired; use the new opt-in discovery and invitations. Remove obsolete firewall rules for that old port manually if you created them.

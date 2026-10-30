@@ -13,6 +13,8 @@ public sealed class UserSettings
     public string DeviceName { get; set; } = Environment.MachineName;
     public List<LauncherEntry> Applications { get; set; } = [];
     public List<TrustedPeer> Peers { get; set; } = [];
+    public bool AutomaticUpdateChecks { get; set; } = true;
+    public bool IncludePreviewUpdates { get; set; } = true;
 }
 
 // One process owns this per-user store (enforced by the desktop's named mutex).
