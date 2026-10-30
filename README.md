@@ -1,6 +1,6 @@
 # HomeBridge — native Windows rebuild
 
-.NET 10 / WPF preview, **1.0.0-alpha.4**. Windows 11 x64 is the target.
+.NET 10 / WPF preview, **1.0.0-alpha.5**. Windows 11 x64 is the target.
 
 | Module | Status |
 | --- | --- |
@@ -17,11 +17,15 @@ Networking is off on every desktop launch. The optional service has no TCP/UDP l
 
 ## Pair two Windows PCs
 
-1. Open **Devices** on both PCs. Use a trusted private LAN. Enable networking on the inviting PC; enable on both to discover both.
-2. On the inviting PC, choose the correct LAN address and **Create invitation**. Send the invitation privately to the other PC.
-3. Paste it into the other PC's invitation box and choose **Pair using invitation**. Compare the full SHA-256 fingerprint with the inviting PC over a trusted channel, then confirm.
-4. **Scan LAN**, select the paired device, and **Authenticate selected discovery**. Discovery alone grants no trust. On the inviting PC, **Refresh trusted devices** displays new peers.
-5. **Forget selected device** removes local authorization immediately. Forget on both PCs for mutual removal. A new invitation is required to restore trust.
+1. Install alpha.5 on both PCs, open **Devices**, and use the same trusted private network.
+2. On the receiving PC, click **Allow pairing for 2 minutes**. This also turns on nearby devices.
+3. On the other PC, click **Search nearby PCs**, select the receiving PC, then **Pair selected PC**.
+4. Compare the eight-digit code shown on BOTH screens. Only choose **Codes match — pair** on each PC if the numbers match exactly and you intended to connect. Cancel mismatches or unexpected requests. Trust is saved only after both approvals; paired devices refresh automatically.
+5. Open **Screen** to share. Newly paired PCs remember their last LAN address and fill it in automatically when selected; you can correct it after network/DHCP changes. The address is a convenience hint, never an authentication credential.
+
+Nearby pairing is closed by default, closes after success, accepts one incoming request at a time, and permits at most five attempts per two-minute window. **Stop accepting pairing**, closing the app, disabling networking or timeout cancels pending confirmation. Codes are not passwords and are not typed or transmitted as authorization tokens. Fresh random nonces are committed before either is revealed; the displayed comparison binds both nonces and the server/client certificate fingerprints. Both humans must compare the actual two screens. This preview protocol has not had an independent security audit; it is not a Bluetooth/ZRTP implementation.
+
+**Advanced: pair with an invitation instead** retains the older invitation workflow for manual connections or older native builds. Create an invitation, send it privately, paste it on the other PC, and verify the full fingerprint before confirming. The nearby code flow requires alpha.5 on both PCs. **Forget selected device** removes local trust immediately; forget on both PCs for mutual removal, then pair again to restore it.
 
 Invitations contain a random 256-bit, single-use secret, valid for five minutes and at most five attempts. Creating a new invitation replaces the previous one. Never post invitations publicly. The receiver of an invitation is authorized to pair: possession replaces a second confirmation on the inviting PC.
 

@@ -26,6 +26,7 @@ public sealed class ScreenPage : DockPanel
     public ScreenPage(NetworkAgent network, UserSettings settings)
     {
         _network = network; _settings = settings; Margin = new Thickness(18);
+        _peers.SelectionChanged += (_, _) => { if (_peers.SelectedItem is TrustedPeer { Address: not null } peer) _address.Text = peer.Address; };
         var server = new ScreenStreamServer(_consent, async ct => {
             ct.ThrowIfCancellationRequested();
             // Capture on the interactive dispatcher; GetDC and ReleaseDC run on the same thread.

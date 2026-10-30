@@ -53,6 +53,11 @@ public sealed class MainWindow : Window
         _settings = _store.Load();
         _identity = Identity.Load(_store);
         _network = new(_store, _settings, _identity);
+        _network.ConfirmNearbyPairing = async (prompt, ct) => {
+            var approved = await PairingDialog.Confirm(this, prompt, ct);
+            // Persistence completes just after confirmation; the periodic refresh shows the result.
+            return approved;
+        };
         _screen = new(_network, _settings);
         foreach (var entry in _settings.Applications) { _apps.Add((entry.Name, entry.Path)); _appsList.Items.Add(entry.Path); }
         Title = "HomeBridge — .NET 10 Preview";
@@ -282,30 +287,51 @@ public sealed class MainWindow : Window
         page.Children.Add(new TextBlock { Text = "Local devices", FontSize = 24 });
         page.Children.Add(new TextBlock { Text = "Enable only on a trusted private network. Share invitations privately and verify the full fingerprint on the other device. Invitations grant pairing; never post them publicly. Networking resets to off when the app closes.", TextWrapping = TextWrapping.Wrap });
         page.Children.Add(_networkStatus);
-        page.Children.Add(Row(AsyncAction("Enable networking", () => { _network.Start(); _networkStatus.Text = "Listening on TCP/UDP 45871. Discovery is untrusted. " + _network.LastError; return Task.CompletedTask; }),
+        page.Children.Add(Label("1. On both PCs, turn on nearby devices. On the receiving PC, click Allow pairing."));
+        page.Children.Add(Row(Action("Allow pairing for 2 minutes", () => {
+            _network.Start(); _network.OpenNearbyPairing();
+            _networkStatus.Text = "Ready to pair for two minutes. On the other PC, search and select this PC. Compare the code on both screens.";
+        }), Action("Stop accepting pairing", () => { _network.CloseNearbyPairing(); _networkStatus.Text = "Nearby pairing is closed."; })));
+        page.Children.Add(Label("2. Search, select the other PC below, then click Pair selected PC."));
+        page.Children.Add(Row(AsyncAction("Turn on nearby devices", () => { _network.Start(); _networkStatus.Text = "Nearby devices are on. Search for another PC, or allow pairing so it can connect to you."; return Task.CompletedTask; }),
             AsyncAction("Disable networking", async () => { _screen.StopAll(); await _network.DisposeAsync(); _invitation.Clear(); _networkStatus.Text = "Local networking is off; invitations canceled."; }),
-            AsyncAction("Scan LAN", async () => { _discovered.ItemsSource = await DiscoveryResponder.Scan(_closing.Token); _networkStatus.Text = "Scan complete. Devices are unverified until authenticated."; })));
+            AsyncAction("Search nearby PCs", async () => { _network.Start(); var devices = (await DiscoveryResponder.Scan(_closing.Token)).Where(d => d.Fingerprint != Identity.Fingerprint(_identity)).ToList(); _discovered.ItemsSource = devices; _networkStatus.Text = devices.Count == 0 ? "No nearby PCs found. Open HomeBridge on the other PC, turn on nearby devices, and check both PCs use the same private network." : "Select the other PC and click Pair selected PC. Compare the code on both screens."; })));
         page.Children.Add(_discovered);
+        page.Children.Add(AsyncAction("Pair selected PC", async () => {
+            if (_discovered.SelectedItem is not DiscoveredDevice device) throw new InvalidOperationException("Search for nearby PCs, then select one from the list.");
+            if (_network.IsTrusted(device.Fingerprint)) { _networkStatus.Text = "This PC is already paired. Open Screen to share your display."; return; }
+            _networkStatus.Text = "Connecting… Compare the code on both PCs and confirm on each.";
+            try { await _network.PairNearby(device, (prompt, ct) => PairingDialog.Confirm(this, prompt, ct), _closing.Token); }
+            catch (Exception ex) when (ex is IOException or System.Net.Sockets.SocketException) {
+                throw new InvalidOperationException("Pairing did not finish. On the other PC, click Allow pairing again, keep both PCs open, then retry. No automatic approval was granted.", ex);
+            }
+            RefreshPeers(); _networkStatus.Text = "Connected to " + device.Name + ". You can now open Screen to share your display.";
+        }));
         var addresses = new ComboBox { MinWidth = 160 };
         foreach (var ip in NetworkInterface.GetAllNetworkInterfaces().Where(n => n.OperationalStatus == OperationalStatus.Up)
             .SelectMany(n => n.GetIPProperties().UnicastAddresses).Select(a => a.Address)
             .Where(ip => ip.AddressFamily == AddressFamily.InterNetwork && !System.Net.IPAddress.IsLoopback(ip) && LanAddress.IsLocal(ip))) addresses.Items.Add(ip.ToString());
         if (addresses.Items.Count > 0) addresses.SelectedIndex = 0;
-        page.Children.Add(Label("Choose this PC's LAN address, create an invitation, and send it privately to the other PC:"));
-        page.Children.Add(Row(addresses, Action("Create invitation", () => {
+        var advanced = new StackPanel();
+        page.Children.Add(new Expander { Header = "Advanced: pair with an invitation instead", Content = advanced, Margin = new Thickness(0, 16, 0, 12) });
+        advanced.Children.Add(Label("Choose this PC's LAN address, create an invitation, and send it privately to the other PC:"));
+        advanced.Children.Add(Row(addresses, Action("Create invitation", () => {
             if (addresses.SelectedItem is not string address) throw new InvalidOperationException("No private LAN IPv4 address available.");
             _invitation.Text = JsonSerializer.Serialize(_network.Invite(address));
         }), Action("Cancel invitation", () => { _network.CancelInvitation(); _invitation.Clear(); })));
-        page.Children.Add(Label("Invitation (copy yours, or paste the other PC's invitation here):"));
-        page.Children.Add(_invitation);
-        page.Children.Add(AsyncAction("Pair using invitation", async () => {
+        advanced.Children.Add(Label("Invitation (copy yours, or paste the other PC's invitation here):"));
+        advanced.Children.Add(_invitation);
+        advanced.Children.Add(AsyncAction("Pair using invitation", async () => {
             var invitation = JsonSerializer.Deserialize<Invitation>(_invitation.Text) ?? throw new InvalidDataException("Invitation missing.");
             invitation.Validate();
             if (MessageBox.Show($"Trust the device at {invitation.Address}?\nCompare this SHA-256 fingerprint with that device over a trusted channel:\n{invitation.Fingerprint}", "Confirm device identity", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
-            await _network.Pair(invitation, _closing.Token); _invitation.Clear(); RefreshPeers(); _networkStatus.Text = "Paired. Only authenticated status checks are available in this phase.";
+            await _network.Pair(invitation, _closing.Token); _invitation.Clear(); RefreshPeers(); _networkStatus.Text = "Paired. Open Screen to start sharing.";
         }));
         page.Children.Add(Label("This device's SHA-256 fingerprint: " + Identity.Fingerprint(_identity)));
         page.Children.Add(Label("Saved trusted devices:")); page.Children.Add(_trusted); RefreshPeers();
+        var refresh = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        refresh.Tick += (_, _) => { var selected = (_trusted.SelectedItem as TrustedPeer)?.Fingerprint; RefreshPeers(); if (selected is not null) _trusted.SelectedItem = _settings.Peers.FirstOrDefault(p => p.Fingerprint == selected); };
+        refresh.Start(); Closed += (_, _) => refresh.Stop();
         page.Children.Add(Row(Action("Refresh trusted devices", RefreshPeers), Action("Forget selected device", () => {
             if (_trusted.SelectedItem is not TrustedPeer peer) return;
             _screen.StopAll();

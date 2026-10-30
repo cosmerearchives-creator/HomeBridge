@@ -3,6 +3,7 @@ using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
+using System.Security.Cryptography;
 
 namespace HomeBridge.Core;
 
@@ -11,6 +12,15 @@ public sealed class NetworkAgent(StateStore store, UserSettings settings, X509Ce
 {
     public const int Port = 45871;
     private readonly PairingGate _pairing = new();
+    private readonly NearbyPairingWindow _nearby = new();
+    private CancellationTokenSource? _nearbyWindow;
+    public Func<PairingPrompt, CancellationToken, Task<bool>>? ConfirmNearbyPairing { get; set; }
+    public void OpenNearbyPairing()
+    {
+        if (!Running) throw new InvalidOperationException("Turn on nearby devices first.");
+        CloseNearbyPairing(); _nearbyWindow = new CancellationTokenSource(TimeSpan.FromMinutes(2)); _nearby.Open();
+    }
+    public void CloseNearbyPairing() { _nearby.Close(); _nearbyWindow?.Cancel(); }
     private readonly SemaphoreSlim _slots = new(8);
     private readonly List<Task> _clients = [];
     private CancellationTokenSource? _stop;
@@ -77,12 +87,23 @@ public sealed class NetworkAgent(StateStore store, UserSettings settings, X509Ce
                     ServerCertificate = identity, ClientCertificateRequired = true,
                     EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
                     AllowTlsResume = false, CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
-                    // Unknown certificates may only submit an invitation. Authorization follows below.
+                    // Unknown certificates can only attempt explicit pairing; authorization follows below.
                     RemoteCertificateValidationCallback = (_, cert, _, _) => cert is not null && Identity.IsValid(cert)
                 }, ct);
                 if (tls.RemoteCertificate is null) return;
                 var fingerprint = Identity.Fingerprint(tls.RemoteCertificate);
                 var message = await Wire.Read<Message>(tls, ct);
+                if (message.Operation == "pair-nearby-v1")
+                {
+                    if (ConfirmNearbyPairing is null || !_nearby.TryEnter()) { await Wire.Write(tls, new Reply(false), ct); return; }
+                    try {
+                        timeout.CancelAfter(TimeSpan.FromMinutes(2));
+                        using var consent = CancellationTokenSource.CreateLinkedTokenSource(ct, _nearbyWindow!.Token);
+                        await AcceptNearby(fingerprint, ((IPEndPoint)client.Client.RemoteEndPoint!).Address.ToString(), message, tls, consent.Token);
+                    }
+                    finally { _nearby.Exit(); }
+                    return;
+                }
                 if (message.Operation == "screen-v1" && IsTrusted(fingerprint) && ScreenRequestHandler is { } screen)
                 {
                     timeout.CancelAfter(TimeSpan.FromMinutes(30));
@@ -96,7 +117,7 @@ public sealed class NetworkAgent(StateStore store, UserSettings settings, X509Ce
                     {
                         var previous = settings.Peers.ToList();
                         settings.Peers.RemoveAll(p => p.Fingerprint == fingerprint);
-                        settings.Peers.Add(new(fingerprint, message.Name));
+                        settings.Peers.Add(new(fingerprint, message.Name, ((IPEndPoint)client.Client.RemoteEndPoint!).Address.ToString()));
                         try { store.Save(settings); authorized = true; }
                         catch { settings.Peers = previous; throw; }
                     }
@@ -104,7 +125,7 @@ public sealed class NetworkAgent(StateStore store, UserSettings settings, X509Ce
                 }
                 await Wire.Write(tls, new Reply(authorized, authorized ? settings.DeviceName : ""), ct);
             }
-            catch (Exception ex) when (ex is IOException or AuthenticationException or OperationCanceledException or System.Text.Json.JsonException or System.Security.Cryptography.CryptographicException or ArgumentException)
+            catch (Exception ex) when (ex is IOException or AuthenticationException or OperationCanceledException or System.Text.Json.JsonException or System.Security.Cryptography.CryptographicException or ArgumentException or FormatException)
             { /* Untrusted peers cannot crash the listener. Never log tokens or payloads. */ }
             catch (UnauthorizedAccessException) { LastError = "Unable to save trust. Pairing refused; check local settings permissions."; }
             finally { _slots.Release(); }
@@ -120,9 +141,64 @@ public sealed class NetworkAgent(StateStore store, UserSettings settings, X509Ce
         {
             var previous = settings.Peers.ToList();
             settings.Peers.RemoveAll(p => p.Fingerprint == invitation.Fingerprint);
-            settings.Peers.Add(new(invitation.Fingerprint, reply.Name));
+            settings.Peers.Add(new(invitation.Fingerprint, reply.Name, invitation.Address));
             try { store.Save(settings); } catch { settings.Peers = previous; throw; }
         }
+    }
+    private void SavePeer(string fingerprint, string name, string address)
+    {
+        lock (settings)
+        {
+            var previous = settings.Peers.ToList(); settings.Peers.RemoveAll(p => p.Fingerprint == fingerprint);
+            settings.Peers.Add(new(fingerprint, name, address));
+            try { store.Save(settings); } catch { settings.Peers = previous; throw; }
+        }
+    }
+    private async Task AcceptNearby(string peerPin, string address, Message message, Stream stream, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(message.Name) || message.Name.Length > 80 || message.Token is null || message.Token.Length != 64 || !message.Token.All(Uri.IsHexDigit))
+            throw new InvalidDataException("Invalid nearby pairing request.");
+        var nonce = RandomNumberGenerator.GetBytes(32);
+        await Wire.Write(stream, new PairingChallenge(PairingComparison.Commit(nonce), settings.DeviceName), ct);
+        var reveal = await Wire.Read<PairingReveal>(stream, ct);
+        var peerNonce = PairingComparison.Reveal(reveal.Nonce, message.Token);
+        await Wire.Write(stream, new PairingReveal(Convert.ToHexString(nonce)), ct);
+        var code = PairingComparison.Code(Identity.Fingerprint(identity), peerPin, peerNonce, nonce);
+        var localApproved = await ConfirmNearbyPairing!(new(message.Name, code), ct);
+        var remote = await Wire.Read<PairingDecision>(stream, ct);
+        ct.ThrowIfCancellationRequested();
+        if (localApproved && remote.Approved) SavePeer(peerPin, message.Name, address);
+        await Wire.Write(stream, new Reply(localApproved && remote.Approved, settings.DeviceName), ct);
+        if (localApproved && remote.Approved) CloseNearbyPairing();
+    }
+    public async Task PairNearby(DiscoveredDevice device, Func<PairingPrompt, CancellationToken, Task<bool>> confirm, CancellationToken cancel)
+    {
+        if (!IPAddress.TryParse(device.Address, out var ip) || !LanAddress.IsLocal(ip)) throw new InvalidDataException("Choose a nearby PC.");
+        using var session = CancellationTokenSource.CreateLinkedTokenSource(cancel); session.CancelAfter(TimeSpan.FromMinutes(2));
+        using var client = new TcpClient();
+        using (var handshake = CancellationTokenSource.CreateLinkedTokenSource(session.Token)) {
+            handshake.CancelAfter(TimeSpan.FromSeconds(8)); await client.ConnectAsync(ip, Port, handshake.Token);
+        }
+        using var tls = new SslStream(client.GetStream(), false);
+        using (var handshake = CancellationTokenSource.CreateLinkedTokenSource(session.Token)) {
+            handshake.CancelAfter(TimeSpan.FromSeconds(8)); await AuthenticateClient(tls, device.Fingerprint, handshake.Token);
+        }
+        var ct = session.Token; var nonce = RandomNumberGenerator.GetBytes(32);
+        await Wire.Write(tls, new Message("pair-nearby-v1", settings.DeviceName, PairingComparison.Commit(nonce)), ct);
+        // A closed pairing window returns the normal refusal instead of a challenge.
+        var challenge = await Wire.Read<System.Text.Json.JsonElement>(tls, ct);
+        if (!challenge.TryGetProperty("Commitment", out var commitment)) throw new AuthenticationException("On the other PC, click Allow pairing, then try again.");
+        var name = challenge.GetProperty("Name").GetString();
+        if (string.IsNullOrWhiteSpace(name) || name.Length > 80) throw new InvalidDataException("Invalid device name.");
+        await Wire.Write(tls, new PairingReveal(Convert.ToHexString(nonce)), ct);
+        var reveal = await Wire.Read<PairingReveal>(tls, ct);
+        var peerNonce = PairingComparison.Reveal(reveal.Nonce, commitment.GetString()!);
+        var code = PairingComparison.Code(device.Fingerprint, Identity.Fingerprint(identity), nonce, peerNonce);
+        var approved = await confirm(new(name, code), ct);
+        await Wire.Write(tls, new PairingDecision(approved), ct);
+        var reply = await Wire.Read<Reply>(tls, ct); ct.ThrowIfCancellationRequested();
+        if (!approved || !reply.Success) throw new AuthenticationException("Pairing canceled. Both PCs must confirm the same code.");
+        SavePeer(device.Fingerprint, name, device.Address);
     }
     public async Task Ping(string address, string fingerprint, CancellationToken ct = default)
     {
@@ -188,6 +264,7 @@ public sealed class NetworkAgent(StateStore store, UserSettings settings, X509Ce
     }
     private async Task StopCore()
     {
+        CloseNearbyPairing();
         _pairing.Close();
         if (_stop is null) return;
         await _stop.CancelAsync(); _listener?.Stop();

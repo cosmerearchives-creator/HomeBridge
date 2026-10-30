@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace HomeBridge.Core;
 
 public sealed record LauncherEntry(string Name, string Path);
-public sealed record TrustedPeer(string Fingerprint, string Name);
+public sealed record TrustedPeer(string Fingerprint, string Name, string? Address = null);
 public sealed class UserSettings
 {
     public int Version { get; set; } = 1;
