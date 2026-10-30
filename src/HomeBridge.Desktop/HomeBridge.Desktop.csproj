@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>HomeBridge</AssemblyName>
-    <Version>1.0.0-alpha.1</Version>
+    <Version>1.0.0-alpha.2</Version>
   </PropertyGroup>
+  <ItemGroup><ProjectReference Include="../HomeBridge.Core/HomeBridge.Core.csproj" /></ItemGroup>
 </Project>

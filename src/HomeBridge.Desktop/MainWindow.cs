@@ -7,11 +7,29 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using HomeBridge.Core;
+using System.Security.Cryptography.X509Certificates;
+using System.Text.Json;
+using System.Threading.Tasks;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
+using System.IO.Pipes;
+using System.Security.Principal;
+using System.Threading;
 
 namespace HomeBridge.Desktop;
 
 public sealed class MainWindow : Window
 {
+    private readonly StateStore _store = new();
+    private readonly UserSettings _settings;
+    private readonly X509Certificate2 _identity;
+    private readonly NetworkAgent _network;
+    private readonly CancellationTokenSource _closing = new();
+    private readonly ListBox _discovered = new() { MinHeight = 100, MaxHeight = 150 };
+    private readonly ListBox _trusted = new() { MinHeight = 80, MaxHeight = 130 };
+    private readonly TextBlock _networkStatus = new() { Text = "Local networking is off.", TextWrapping = TextWrapping.Wrap };
+    private readonly TextBox _invitation = new() { TextWrapping = TextWrapping.Wrap, MaxLength = 2048, MinHeight = 65 };
     private readonly List<string> _files = new();
     private readonly TextBox _find = new() { MinWidth = 120 };
     private readonly TextBox _replace = new() { MinWidth = 120 };
@@ -24,6 +42,10 @@ public sealed class MainWindow : Window
 
     public MainWindow()
     {
+        _settings = _store.Load();
+        _identity = Identity.Load(_store);
+        _network = new(_store, _settings, _identity);
+        foreach (var entry in _settings.Applications) { _apps.Add((entry.Name, entry.Path)); _appsList.Items.Add(entry.Path); }
         Title = "HomeBridge — .NET 10 Preview";
         Width = 1050; Height = 720; MinWidth = 740; MinHeight = 530;
         Background = new SolidColorBrush(Color.FromRgb(20, 23, 32));
@@ -32,11 +54,16 @@ public sealed class MainWindow : Window
         tabs.Items.Add(Tab("Overview", Overview()));
         tabs.Items.Add(Tab("Bulk Rename", RenamePage()));
         tabs.Items.Add(Tab("Application Launcher", AppPage()));
-        tabs.Items.Add(Tab("Devices", Pending("Device discovery and secure pairing")));
+        tabs.Items.Add(Tab("Devices", DevicesPage()));
         tabs.Items.Add(Tab("Files", Pending("Authenticated file sharing and transfers")));
         tabs.Items.Add(Tab("Screen", Pending("Low-latency screen streaming and optional remote input")));
         tabs.Items.Add(Tab("Roku Media", Pending("DLNA background media service")));
         Content = tabs;
+        Closing += async (_, e) => {
+            if (_closing.IsCancellationRequested) return;
+            e.Cancel = true; IsEnabled = false; _closing.Cancel();
+            await _network.DisposeAsync(); _identity.Dispose(); Close();
+        };
     }
 
     private static TabItem Tab(string header, UIElement content) => new() { Header = header, Content = content };
@@ -61,7 +88,7 @@ public sealed class MainWindow : Window
     private UIElement Overview() => new StackPanel { Margin = new Thickness(24), Children = {
         new TextBlock { Text = "HomeBridge Native", FontSize = 32, FontWeight = FontWeights.Bold },
         new TextBlock { Text = "C# / .NET 10 / WPF • Early migration build", FontSize = 17, Margin = new Thickness(0, 12, 0, 20) },
-        new TextBlock { Text = "Working today: local file bulk rename and local application launching. The other HomeBridge modules will be migrated progressively. This build does not install or enable network services.", TextWrapping = TextWrapping.Wrap, FontSize = 15 }
+        new TextBlock { Text = "Local bulk rename, saved application shortcuts, and opt-in device discovery and secure pairing. The optional Windows service reports local status only. File sharing, remote launch, screen streaming and Roku remain pending.", TextWrapping = TextWrapping.Wrap, FontSize = 15 }
     } };
 
     private UIElement RenamePage()
@@ -121,14 +148,96 @@ public sealed class MainWindow : Window
         panel.Children.Add(Label("Local application launcher — remote launching is not yet migrated"));
         panel.Children.Add(Row(Action("Add EXE…", () => {
             var dialog = new OpenFileDialog { Filter = "Windows applications (*.exe)|*.exe", Title = "Select an application" };
-            if (dialog.ShowDialog() == true) { _apps.Add((Path.GetFileNameWithoutExtension(dialog.FileName), dialog.FileName)); _appsList.Items.Add(dialog.FileName); }
+            if (dialog.ShowDialog() == true) {
+                var entry = new LauncherEntry(Path.GetFileNameWithoutExtension(dialog.FileName), dialog.FileName);
+                lock (_settings) {
+                    _settings.Applications.Add(entry);
+                    try { _store.Save(_settings); } catch { _settings.Applications.Remove(entry); throw; }
+                }
+                _apps.Add((entry.Name, entry.Path)); _appsList.Items.Add(entry.Path);
+            }
         }), Action("Launch selected", () => {
             var index = _appsList.SelectedIndex;
             if (index < 0) return;
             Process.Start(new ProcessStartInfo(_apps[index].Path) { UseShellExecute = true });
+        }), Action("Remove selected", () => {
+            var index = _appsList.SelectedIndex; if (index < 0) return;
+            lock (_settings) {
+                var entry = _settings.Applications[index]; _settings.Applications.RemoveAt(index);
+                try { _store.Save(_settings); } catch { _settings.Applications.Insert(index, entry); throw; }
+            }
+            _apps.RemoveAt(index); _appsList.Items.RemoveAt(index);
         })));
         _appsList.MinHeight = 240;
         panel.Children.Add(_appsList);
         return panel;
+    }
+
+    private Button AsyncAction(string text, Func<Task> action)
+    {
+        var button = new Button { Content = text, Padding = new Thickness(12, 7, 12, 7), Margin = new Thickness(0, 4, 10, 4) };
+        button.Click += async (_, _) => {
+            button.IsEnabled = false;
+            try { await action(); }
+            catch (OperationCanceledException) { if (!_closing.IsCancellationRequested) _networkStatus.Text = "Operation timed out."; }
+            catch (Exception ex) { _networkStatus.Text = ex.Message; }
+            finally { button.IsEnabled = true; }
+        };
+        return button;
+    }
+    private void RefreshPeers()
+    {
+        lock (_settings) _trusted.ItemsSource = _settings.Peers.ToList();
+        _trusted.DisplayMemberPath = nameof(TrustedPeer.Name);
+    }
+    private UIElement DevicesPage()
+    {
+        var page = new StackPanel { Margin = new Thickness(24) };
+        page.Children.Add(new TextBlock { Text = "Local devices", FontSize = 24 });
+        page.Children.Add(new TextBlock { Text = "Enable only on a trusted private network. Share invitations privately and verify the full fingerprint on the other device. Invitations grant pairing; never post them publicly. Networking resets to off when the app closes.", TextWrapping = TextWrapping.Wrap });
+        page.Children.Add(_networkStatus);
+        page.Children.Add(Row(AsyncAction("Enable networking", () => { _network.Start(); _networkStatus.Text = "Listening on TCP/UDP 45871. Discovery is untrusted. " + _network.LastError; return Task.CompletedTask; }),
+            AsyncAction("Disable networking", async () => { await _network.DisposeAsync(); _invitation.Clear(); _networkStatus.Text = "Local networking is off; invitations canceled."; }),
+            AsyncAction("Scan LAN", async () => { _discovered.ItemsSource = await DiscoveryResponder.Scan(_closing.Token); _networkStatus.Text = "Scan complete. Devices are unverified until authenticated."; })));
+        page.Children.Add(_discovered);
+        var addresses = new ComboBox { MinWidth = 160 };
+        foreach (var ip in NetworkInterface.GetAllNetworkInterfaces().Where(n => n.OperationalStatus == OperationalStatus.Up)
+            .SelectMany(n => n.GetIPProperties().UnicastAddresses).Select(a => a.Address)
+            .Where(ip => ip.AddressFamily == AddressFamily.InterNetwork && !System.Net.IPAddress.IsLoopback(ip) && LanAddress.IsLocal(ip))) addresses.Items.Add(ip.ToString());
+        if (addresses.Items.Count > 0) addresses.SelectedIndex = 0;
+        page.Children.Add(Label("Choose this PC's LAN address, create an invitation, and send it privately to the other PC:"));
+        page.Children.Add(Row(addresses, Action("Create invitation", () => {
+            if (addresses.SelectedItem is not string address) throw new InvalidOperationException("No private LAN IPv4 address available.");
+            _invitation.Text = JsonSerializer.Serialize(_network.Invite(address));
+        }), Action("Cancel invitation", () => { _network.CancelInvitation(); _invitation.Clear(); })));
+        page.Children.Add(Label("Invitation (copy yours, or paste the other PC's invitation here):"));
+        page.Children.Add(_invitation);
+        page.Children.Add(AsyncAction("Pair using invitation", async () => {
+            var invitation = JsonSerializer.Deserialize<Invitation>(_invitation.Text) ?? throw new InvalidDataException("Invitation missing.");
+            invitation.Validate();
+            if (MessageBox.Show($"Trust the device at {invitation.Address}?\nCompare this SHA-256 fingerprint with that device over a trusted channel:\n{invitation.Fingerprint}", "Confirm device identity", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
+            await _network.Pair(invitation, _closing.Token); _invitation.Clear(); RefreshPeers(); _networkStatus.Text = "Paired. Only authenticated status checks are available in this phase.";
+        }));
+        page.Children.Add(Label("This device's SHA-256 fingerprint: " + Identity.Fingerprint(_identity)));
+        page.Children.Add(Label("Saved trusted devices:")); page.Children.Add(_trusted); RefreshPeers();
+        page.Children.Add(Row(Action("Refresh trusted devices", RefreshPeers), Action("Forget selected device", () => {
+            if (_trusted.SelectedItem is not TrustedPeer peer) return;
+            lock (_settings) {
+                var previous = _settings.Peers.ToList(); _settings.Peers.Remove(peer);
+                try { _store.Save(_settings); } catch { _settings.Peers = previous; throw; }
+            }
+            RefreshPeers(); _networkStatus.Text = "Local trust revoked. Also forget this PC on the other device for mutual removal.";
+        }), AsyncAction("Authenticate selected discovery", async () => {
+            if (_discovered.SelectedItem is not DiscoveredDevice device) throw new InvalidOperationException("Select a discovered device first.");
+            await _network.Ping(device.Address, device.Fingerprint, _closing.Token); _networkStatus.Text = "Mutual device authentication succeeded.";
+        }), AsyncAction("Check Windows service", async () => {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_closing.Token); timeout.CancelAfter(2000);
+            using var pipe = new NamedPipeClientStream(".", "HomeBridge.Status.v1", PipeDirection.In, PipeOptions.Asynchronous, TokenImpersonationLevel.Anonymous);
+            await pipe.ConnectAsync(timeout.Token);
+            using var reader = new StreamReader(pipe);
+            var buffer = new char[256]; var count = await reader.ReadAsync(buffer.AsMemory(), timeout.Token);
+            _networkStatus.Text = "Informational local service status: " + new string(buffer, 0, count);
+        })));
+        return new ScrollViewer { Content = page, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
     }
 }

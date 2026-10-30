@@ -1,7 +1,7 @@
 name: Windows installer
 on:
   push:
-    branches: [main]
+    branches: [main, 'codex/**']
   pull_request:
   workflow_dispatch:
 permissions:
@@ -9,6 +9,7 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -18,16 +19,32 @@ jobs:
         run: dotnet restore HomeBridge.slnx
       - name: Build
         run: dotnet build HomeBridge.slnx -c Release --no-restore
+      - name: Test persistence, authentication and rename regression
+        run: dotnet test tests/HomeBridge.Tests/HomeBridge.Tests.csproj -c Release --no-build --logger "trx;LogFileName=tests.trx" --results-directory TestResults
       - name: Publish standalone executable
         run: dotnet publish src/HomeBridge.Desktop/HomeBridge.Desktop.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o publish
+      - name: Publish optional LocalService worker
+        run: dotnet publish src/HomeBridge.Service/HomeBridge.Service.csproj -c Release -r win-x64 --self-contained true -o publish/service
       - name: Install Inno Setup
         run: choco install innosetup --yes --no-progress
       - name: Create installer
         shell: pwsh
         run: |
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "installer\HomeBridge.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify service install, least privilege, status, upgrade and uninstall
+        shell: pwsh
+        run: ./tests/Service-Smoke.ps1
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: HomeBridge-Test-Results
+          path: TestResults/*.trx
+          if-no-files-found: ignore
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: HomeBridge-Windows-Installer
           path: artifacts/HomeBridge-Setup.exe
+          if-no-files-found: error
