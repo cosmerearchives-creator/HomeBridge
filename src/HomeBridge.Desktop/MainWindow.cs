@@ -26,6 +26,7 @@ public sealed class MainWindow : Window
     private readonly UserSettings _settings;
     private readonly X509Certificate2 _identity;
     private readonly NetworkAgent _network;
+    private readonly ScreenPage _screen;
     private readonly CancellationTokenSource _closing = new();
     private readonly ListBox _discovered = new() { MinHeight = 100, MaxHeight = 150 };
     private readonly ListBox _trusted = new() { MinHeight = 80, MaxHeight = 130 };
@@ -52,6 +53,7 @@ public sealed class MainWindow : Window
         _settings = _store.Load();
         _identity = Identity.Load(_store);
         _network = new(_store, _settings, _identity);
+        _screen = new(_network, _settings);
         foreach (var entry in _settings.Applications) { _apps.Add((entry.Name, entry.Path)); _appsList.Items.Add(entry.Path); }
         Title = "HomeBridge — .NET 10 Preview";
         Width = 1050; Height = 720; MinWidth = 740; MinHeight = 530;
@@ -64,12 +66,12 @@ public sealed class MainWindow : Window
         tabs.Items.Add(Tab("Devices", DevicesPage()));
         tabs.Items.Add(Tab("Settings", SettingsPage()));
         tabs.Items.Add(Tab("Files", Pending("Authenticated file sharing and transfers")));
-        tabs.Items.Add(Tab("Screen", Pending("Low-latency screen streaming and optional remote input")));
+        tabs.Items.Add(Tab("Screen", _screen));
         tabs.Items.Add(Tab("Roku Media", Pending("DLNA background media service")));
         Content = tabs;
         Closing += async (_, e) => {
             if (_closing.IsCancellationRequested) return;
-            e.Cancel = true; IsEnabled = false; _closing.Cancel();
+            e.Cancel = true; IsEnabled = false; _screen.Shutdown(); _closing.Cancel();
             await _network.DisposeAsync(); _updater.Dispose(); _identity.Dispose(); Close();
         };
         Loaded += async (_, _) => {
@@ -99,7 +101,7 @@ public sealed class MainWindow : Window
     private UIElement Overview() => new StackPanel { Margin = new Thickness(24), Children = {
         new TextBlock { Text = "HomeBridge Native", FontSize = 32, FontWeight = FontWeights.Bold },
         new TextBlock { Text = "C# / .NET 10 / WPF • Early migration build", FontSize = 17, Margin = new Thickness(0, 12, 0, 20) },
-        new TextBlock { Text = "Local bulk rename, saved application shortcuts, and opt-in device discovery and secure pairing. The optional Windows service reports local status only. File sharing, remote launch, screen streaming and Roku remain pending.", TextWrapping = TextWrapping.Wrap, FontSize = 15 }
+        new TextBlock { Text = "Local bulk rename, saved application shortcuts, secure pairing, and approved view-only screen sharing. The optional Windows service reports local status only. File sharing, remote launch and Roku remain pending.", TextWrapping = TextWrapping.Wrap, FontSize = 15 }
     } };
 
     private UIElement RenamePage()
@@ -281,7 +283,7 @@ public sealed class MainWindow : Window
         page.Children.Add(new TextBlock { Text = "Enable only on a trusted private network. Share invitations privately and verify the full fingerprint on the other device. Invitations grant pairing; never post them publicly. Networking resets to off when the app closes.", TextWrapping = TextWrapping.Wrap });
         page.Children.Add(_networkStatus);
         page.Children.Add(Row(AsyncAction("Enable networking", () => { _network.Start(); _networkStatus.Text = "Listening on TCP/UDP 45871. Discovery is untrusted. " + _network.LastError; return Task.CompletedTask; }),
-            AsyncAction("Disable networking", async () => { await _network.DisposeAsync(); _invitation.Clear(); _networkStatus.Text = "Local networking is off; invitations canceled."; }),
+            AsyncAction("Disable networking", async () => { _screen.StopAll(); await _network.DisposeAsync(); _invitation.Clear(); _networkStatus.Text = "Local networking is off; invitations canceled."; }),
             AsyncAction("Scan LAN", async () => { _discovered.ItemsSource = await DiscoveryResponder.Scan(_closing.Token); _networkStatus.Text = "Scan complete. Devices are unverified until authenticated."; })));
         page.Children.Add(_discovered);
         var addresses = new ComboBox { MinWidth = 160 };
@@ -306,6 +308,7 @@ public sealed class MainWindow : Window
         page.Children.Add(Label("Saved trusted devices:")); page.Children.Add(_trusted); RefreshPeers();
         page.Children.Add(Row(Action("Refresh trusted devices", RefreshPeers), Action("Forget selected device", () => {
             if (_trusted.SelectedItem is not TrustedPeer peer) return;
+            _screen.StopAll();
             lock (_settings) {
                 var previous = _settings.Peers.ToList(); _settings.Peers.Remove(peer);
                 try { _store.Save(_settings); } catch { _settings.Peers = previous; throw; }

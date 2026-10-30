@@ -134,7 +134,7 @@ public sealed class NetworkTests
         await Assert.ThrowsAsync<AuthenticationException>(() => client.Ping("127.0.0.1", invite.Fingerprint));
     }
 
-    private static async Task<Reply> RawRequest(X509Certificate2 server, X509Certificate2? clientCertificate, Message message)
+    internal static async Task<Reply> RawRequest(X509Certificate2 server, X509Certificate2? clientCertificate, Message message)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5)); var ct = timeout.Token;
         using var client = new TcpClient(); await client.ConnectAsync(IPAddress.Loopback, NetworkAgent.Port, ct);

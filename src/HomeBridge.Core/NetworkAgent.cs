@@ -21,6 +21,8 @@ public sealed class NetworkAgent(StateStore store, UserSettings settings, X509Ce
     private Task? _shutdown;
     public bool Running => _stop is not null;
     public string? LastError { get; private set; }
+    public Func<string, Stream, CancellationToken, Task>? ScreenRequestHandler { get; set; }
+    public bool IsTrusted(string fingerprint) { lock (settings) return settings.Peers.Any(p => p.Fingerprint == fingerprint); }
 
     public void Start()
     {
@@ -81,6 +83,11 @@ public sealed class NetworkAgent(StateStore store, UserSettings settings, X509Ce
                 if (tls.RemoteCertificate is null) return;
                 var fingerprint = Identity.Fingerprint(tls.RemoteCertificate);
                 var message = await Wire.Read<Message>(tls, ct);
+                if (message.Operation == "screen-v1" && IsTrusted(fingerprint) && ScreenRequestHandler is { } screen)
+                {
+                    timeout.CancelAfter(TimeSpan.FromMinutes(30));
+                    await screen(fingerprint, tls, ct); return;
+                }
                 var authorized = false;
                 if (message.Name is null || message.Name.Length > 80) return;
                 lock (settings)
@@ -130,17 +137,50 @@ public sealed class NetworkAgent(StateStore store, UserSettings settings, X509Ce
         var ct = timeout.Token;
         using var client = new TcpClient(); await client.ConnectAsync(ip, port, ct);
         using var tls = new SslStream(client.GetStream(), false);
-        await tls.AuthenticateAsClientAsync(new SslClientAuthenticationOptions {
+        await AuthenticateClient(tls, pin, ct);
+        await Wire.Write(tls, message, ct);
+        var reply = await Wire.Read<Reply>(tls, ct);
+        if (reply.Name is null || reply.Name.Length > 80) throw new InvalidDataException("Invalid device name.");
+        return reply;
+    }
+    private Task AuthenticateClient(SslStream tls, string pin, CancellationToken ct) =>
+        tls.AuthenticateAsClientAsync(new SslClientAuthenticationOptions {
             TargetHost = "HomeBridge", ClientCertificates = new X509CertificateCollection { identity },
             LocalCertificateSelectionCallback = (_, _, _, _, _) => identity,
             RemoteCertificateValidationCallback = (_, cert, _, _) => Identity.Matches(cert, pin),
             EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13, AllowTlsResume = false,
             CertificateRevocationCheckMode = X509RevocationMode.NoCheck
         }, ct);
-        await Wire.Write(tls, message, ct);
-        var reply = await Wire.Read<Reply>(tls, ct);
-        if (reply.Name is null || reply.Name.Length > 80) throw new InvalidDataException("Invalid device name.");
-        return reply;
+
+    public async Task ViewScreen(string address, string fingerprint, Func<byte[], CancellationToken, Task> onFrame, CancellationToken cancel)
+    {
+        if (!IsTrusted(fingerprint)) throw new AuthenticationException("Pair this device first.");
+        if (!IPAddress.TryParse(address, out var ip) || !LanAddress.IsLocal(ip)) throw new InvalidDataException("Enter a private LAN address.");
+        using var session = CancellationTokenSource.CreateLinkedTokenSource(cancel); session.CancelAfter(TimeSpan.FromMinutes(30));
+        using var client = new TcpClient();
+        using (var handshake = CancellationTokenSource.CreateLinkedTokenSource(session.Token))
+        {
+            handshake.CancelAfter(TimeSpan.FromSeconds(8));
+            await client.ConnectAsync(ip, Port, handshake.Token);
+        }
+        using var tls = new SslStream(client.GetStream(), false);
+        using (var handshake = CancellationTokenSource.CreateLinkedTokenSource(session.Token))
+        {
+            handshake.CancelAfter(TimeSpan.FromSeconds(8));
+            await AuthenticateClient(tls, fingerprint, handshake.Token);
+            await Wire.Write(tls, new Message("screen-v1"), handshake.Token);
+            if (!(await Wire.Read<Reply>(tls, handshake.Token)).Success)
+                throw new AuthenticationException("Screen viewing was refused. The other PC must approve sharing to this paired device first.");
+        }
+        while (!session.IsCancellationRequested)
+        {
+            if (!IsTrusted(fingerprint)) throw new AuthenticationException("Device trust was revoked.");
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(session.Token); deadline.CancelAfter(TimeSpan.FromSeconds(5));
+            await Wire.Write(tls, new Message("next-frame"), deadline.Token);
+            var jpeg = await ScreenFrames.Read(tls, deadline.Token);
+            await onFrame(jpeg, session.Token);
+        }
+        session.Token.ThrowIfCancellationRequested();
     }
     public ValueTask DisposeAsync()
     {

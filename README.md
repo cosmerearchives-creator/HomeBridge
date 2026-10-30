@@ -1,6 +1,6 @@
 # HomeBridge — native Windows rebuild
 
-.NET 10 / WPF preview, **1.0.0-alpha.3**. Windows 11 x64 is the target.
+.NET 10 / WPF preview, **1.0.0-alpha.4**. Windows 11 x64 is the target.
 
 | Module | Status |
 | --- | --- |
@@ -10,7 +10,8 @@
 | Devices | Opt-in IPv4 LAN discovery, invitation pairing, mutually authenticated status checks |
 | Windows service | Optional LocalService worker; local read-only status pipe |
 | Updates | Automatic startup checks; verified in-app installer download and user-approved upgrade |
-| Files, Screen, Roku DLNA, remote launch, Android integration | Pending; no endpoints provided |
+| Screen | Paired view-only primary-display sharing with local approval and a Stop sharing indicator |
+| Files, Roku DLNA, remote launch, Android integration | Pending; no endpoints provided |
 
 Networking is off on every desktop launch. The optional service has no TCP/UDP listener and never runs desktop tools.
 
@@ -39,6 +40,20 @@ The installer offers an unchecked **Install local status service** task. It regi
 The worker only reports health on `HomeBridge.Status.v1`. Its pipe denies the Network SID and grants interactive users read-only access; LocalService, SYSTEM and administrators control the pipe. A first-instance flag avoids attaching to an existing pipe owner. The desktop uses anonymous impersonation level and treats status as informational, never as an authorization signal. The worker has no client commands, user-supplied paths, plugins, credentials, launch operations or impersonation.
 
 Discovery, identity and pairing run in the interactive per-user agent, which stops when the desktop closes. Future always-on transfers need a separately reviewed command protocol and permission model; do not add generic execution to this worker.
+
+## Screen sharing (alpha.4)
+
+Install alpha.4 on both PCs and pair them in **Devices**. Enable networking on the sharing PC. In **Screen**, refresh paired devices, select the viewing PC, and click **Approve sharing to selected PC**. Confirm its name/fingerprint and close private windows and notifications. The red, topmost sharing window must be shown before access is granted; closing it or pressing **STOP SHARING** cancels approval and the active stream.
+
+On the viewing PC, select the sharing PC in **Screen**, enter its private LAN IPv4 address, and click **View screen**. This is view-only: no keyboard/mouse input, audio, recording, file access or remote application launching is provided. **Stop viewing** disconnects and clears the displayed image. Both applications must remain running in interactive Windows sessions.
+
+Each local approval is in-memory, names one exact paired certificate, expires after five minutes without a connection, and permits one connection for at most 30 minutes. Disconnecting consumes it; reconnecting requires fresh approval. Both peers authenticate with their existing pinned certificates over TLS 1.2/1.3 on TCP 45871. Unpaired or unapproved clients cannot trigger capture. Trust is checked before each capture and before sending each frame. Stop sharing, disabling networking, forgetting a device, closing the app, session lock/logoff or console/remote disconnect cancels sharing. Stopping cannot recall a frame already in flight; viewers can independently save or photograph received images.
+
+The preview uses GDI capture and baseline JPEG frames (quality 65), proportionally downscaled within 1280×720, at a maximum of five frames/second. It captures the primary display, including visible notifications and the sharing indicator; no region/window selection, secondary-monitor selection, cursor overlay, hardware video encoding, adaptive bitrate, HDR support or secure/UAC desktop capture is implemented. Protected/accelerated content may appear black; secure/locked desktop and real multi-monitor/DPI behavior require manual validation. This is intended for basic desktop viewing rather than smooth video/gaming.
+
+Frames have a 2 MiB byte limit and bounded JPEG dimensions checked before WPF decoding. One frame is requested at a time; there is no accumulating frame queue. Five-second I/O deadlines stop stalled peers. The local Windows service does not capture screens or expose any new commands. No recording, stored screenshots, automatic approval, persistent sharing permission, or Internet relay is added.
+
+Tests cover consent expiry/single-use/concurrent access, real WPF JPEG encoding and frame validation, mutual-TLS streaming, no capture before approval, reconnect refusal, local stop and trust revocation. Live primary-screen capture, the persistent stop window, lock handling, high-DPI/multiple-monitor behavior and a real two-PC session still need manual checks before broad distribution.
 
 ## Authentication and limits
 

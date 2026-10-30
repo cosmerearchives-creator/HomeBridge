@@ -1,5 +1,5 @@
 #define MyAppName "HomeBridge"
-#define MyAppVersion "1.0.0-alpha.3"
+#define MyAppVersion "1.0.0-alpha.4"
 [Setup]
 AppId={{A18862F5-1AB5-4B7E-BABE-4878F7B10D29}
 AppName={#MyAppName}
