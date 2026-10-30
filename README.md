@@ -63,3 +63,7 @@ The installer registers `HomeBridgeDiscovery` using Windows Service Control Mana
 **Direct installer:** https://github.com/cosmerearchives-creator/HomeBridge/releases/download/native-preview/HomeBridge-Setup.exe
 
 The Windows installer GitHub Actions workflow uploads its normal artifact and, on successful pushes to `main`, publishes or replaces the downloadable installer asset in the rolling `native-preview` prerelease. Pull requests do not publish releases. For now this is distribution only; automatic in-app updates and installer signing have not been implemented. Browser security prompts may appear for an unsigned installer. Install only if you trust this repository and the build. The native application does not yet include all Python-era modules.
+
+## Discovery installer repair
+
+The installer includes the Windows discovery service and its PowerShell registration script. It adds a Windows Firewall inbound rule for UDP 45679 restricted to the Private profile and local subnet. Reinstall HomeBridge on *both* PCs, ensure their networks are Private, and check `HomeBridgeDiscovery` in `services.msc`. The rule is removed on uninstall. Avoid disabling the firewall globally.

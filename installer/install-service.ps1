@@ -10,3 +10,9 @@ if ($existing) {
     New-Service -Name $name -BinaryPathName ('"' + $exe + '"') -DisplayName 'HomeBridge Discovery' -Description 'Local LAN device discovery; no file or command access.' -StartupType Automatic | Out-Null
 }
 Start-Service -Name $name
+
+# Discovery requests contain no credentials or remote-control capabilities.
+# Restrict the inbound UDP listener to Private networks and local subnet.
+$ruleName = 'HomeBridge Discovery (Private LAN)'
+Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Action Allow -Enabled True -Profile Private -Protocol UDP -LocalPort 45679 -RemoteAddress LocalSubnet | Out-Null

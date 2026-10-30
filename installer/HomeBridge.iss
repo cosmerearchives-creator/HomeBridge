@@ -16,15 +16,18 @@ PrivilegesRequired=admin
 UninstallDisplayIcon={app}\HomeBridge.exe
 [Files]
 Source: "..\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\publish-service\*"; DestDir: "{app}\service"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "install-service.ps1"; DestDir: "{app}"; Flags: ignoreversion
 [Icons]
 Name: "{autoprograms}\HomeBridge"; Filename: "{app}\HomeBridge.exe"
 Name: "{autodesktop}\HomeBridge"; Filename: "{app}\HomeBridge.exe"; Tasks: desktopicon
 [Tasks]
 Name: desktopicon; Description: "Create a desktop shortcut"; Flags: unchecked
 [Run]
-Filename: "{sys}\\WindowsPowerShell\\v1.0\\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\\install-service.ps1"""; Flags: runhidden waituntilterminated
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install-service.ps1"""; Flags: runhidden waituntilterminated
 Filename: "{app}\HomeBridge.exe"; Description: "Launch HomeBridge"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
-Filename: "{sys}\\sc.exe"; Parameters: "stop HomeBridgeDiscovery"; Flags: runhidden waituntilterminated
-Filename: "{sys}\\sc.exe"; Parameters: "delete HomeBridgeDiscovery"; Flags: runhidden waituntilterminated
+Filename: "{sys}\sc.exe"; Parameters: "stop HomeBridgeDiscovery"; Flags: runhidden waituntilterminated
+Filename: "{sys}\sc.exe"; Parameters: "delete HomeBridgeDiscovery"; Flags: runhidden waituntilterminated
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""Get-NetFirewallRule -DisplayName 'HomeBridge Discovery (Private LAN)' -ErrorAction SilentlyContinue | Remove-NetFirewallRule"""; Flags: runhidden waituntilterminated
