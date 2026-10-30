@@ -285,7 +285,7 @@ public sealed class MainWindow : Window
     {
         var page = new StackPanel { Margin = new Thickness(24) };
         page.Children.Add(new TextBlock { Text = "Local devices", FontSize = 24 });
-        page.Children.Add(new TextBlock { Text = "Enable only on a trusted private network. Share invitations privately and verify the full fingerprint on the other device. Invitations grant pairing; never post them publicly. Networking resets to off when the app closes.", TextWrapping = TextWrapping.Wrap });
+        page.Children.Add(new TextBlock { Text = "Connect two PCs on the same private network. Select the other PC and compare the code on both screens. Nearby devices turn off when HomeBridge closes.", TextWrapping = TextWrapping.Wrap });
         page.Children.Add(_networkStatus);
         page.Children.Add(Label("1. On both PCs, turn on nearby devices. On the receiving PC, click Allow pairing."));
         page.Children.Add(Row(Action("Allow pairing for 2 minutes", () => {

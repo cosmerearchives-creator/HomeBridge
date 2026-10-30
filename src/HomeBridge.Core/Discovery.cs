@@ -8,7 +8,7 @@ namespace HomeBridge.Core;
 public sealed record Advertisement(int Version, string Nonce, string Name, string Fingerprint);
 public sealed record DiscoveredDevice(string Address, string Name, string Fingerprint)
 {
-    public override string ToString() => $"{Name} — {Address} — {Fingerprint[..12]}… (unverified until authenticated)";
+    public override string ToString() => $"{Name} — {Address}";
 }
 
 public sealed class DiscoveryResponder : IAsyncDisposable
