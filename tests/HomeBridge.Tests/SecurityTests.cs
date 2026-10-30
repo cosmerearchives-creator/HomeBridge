@@ -3,6 +3,10 @@ using System.Net;
 using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Text;
+using System.Net.Security;
+using System.Net.Sockets;
+using System.Security.Cryptography.X509Certificates;
+using System.Text.Json;
 using HomeBridge.Core;
 using HomeBridge.Desktop;
 using Xunit;
@@ -111,6 +115,7 @@ public sealed class NetworkTests
         await using var server = new NetworkAgent(serverStore, serverSettings, serverId);
         await using var client = new NetworkAgent(clientStore, clientSettings, clientId);
         server.Start(); var invite = server.Invite("127.0.0.1");
+        Assert.False((await RawRequest(serverId, clientId, new Message("ping", "Unknown PC"))).Success);
         var pinFailure = await Record.ExceptionAsync(() => client.Pair(invite with { Fingerprint = new string('0', 64) }));
         Assert.True(pinFailure is AuthenticationException or IOException, pinFailure?.ToString());
         await Assert.ThrowsAsync<AuthenticationException>(() => client.Pair(invite with { Token = new string('0', 64) }));
@@ -118,8 +123,46 @@ public sealed class NetworkTests
         await client.Pair(invite);
         Assert.Single(serverStore.Load().Peers); Assert.Single(clientStore.Load().Peers);
         await client.Ping("127.0.0.1", invite.Fingerprint);
+        Assert.False((await RawRequest(serverId, clientId, new Message("launch", "Unknown command"))).Success);
         await Assert.ThrowsAsync<AuthenticationException>(() => client.Pair(invite));
         lock (serverSettings) { serverSettings.Peers.Clear(); serverStore.Save(serverSettings); }
         await Assert.ThrowsAsync<AuthenticationException>(() => client.Ping("127.0.0.1", invite.Fingerprint));
+        var missingCertificate = await Record.ExceptionAsync(() => RawRequest(serverId, null, new Message("pair", "No certificate", invite.Token)));
+        Assert.True(missingCertificate is AuthenticationException or IOException, missingCertificate?.ToString());
+        await server.DisposeAsync(); await server.DisposeAsync();
+        server.Start(); // Releasing sockets and restarting must retain revocation and identity.
+        await Assert.ThrowsAsync<AuthenticationException>(() => client.Ping("127.0.0.1", invite.Fingerprint));
+    }
+
+    private static async Task<Reply> RawRequest(X509Certificate2 server, X509Certificate2? clientCertificate, Message message)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5)); var ct = timeout.Token;
+        using var client = new TcpClient(); await client.ConnectAsync(IPAddress.Loopback, NetworkAgent.Port, ct);
+        using var tls = new SslStream(client.GetStream(), false);
+        await tls.AuthenticateAsClientAsync(new SslClientAuthenticationOptions {
+            TargetHost = "HomeBridge", AllowTlsResume = false,
+            ClientCertificates = clientCertificate is null ? new() : new() { clientCertificate },
+            LocalCertificateSelectionCallback = (_, _, _, _, _) => clientCertificate!,
+            RemoteCertificateValidationCallback = (_, cert, _, _) => Identity.Matches(cert, Identity.Fingerprint(server))
+        }, ct);
+        await Wire.Write(tls, message, ct); return await Wire.Read<Reply>(tls, ct);
+    }
+
+    [Fact] public async Task DiscoveryReturnsOnlyUntrustedPublicMetadataAndRejectsMalformedQueries()
+    {
+        var fingerprint = new string('A', 64);
+        await using var responder = new DiscoveryResponder("Test PC", fingerprint);
+        using var client = new UdpClient(AddressFamily.InterNetwork);
+        var endpoint = new IPEndPoint(IPAddress.Loopback, NetworkAgent.Port);
+        await client.SendAsync(Encoding.ASCII.GetBytes("HB1:bad"), endpoint);
+        using (var shortTimeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(300)))
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await client.ReceiveAsync(shortTimeout.Token));
+        var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
+        await client.SendAsync(Encoding.ASCII.GetBytes("HB1:" + nonce), endpoint);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var result = await client.ReceiveAsync(timeout.Token);
+        var ad = JsonSerializer.Deserialize<Advertisement>(result.Buffer)!;
+        Assert.Equal(nonce, ad.Nonce); Assert.Equal(fingerprint, ad.Fingerprint); Assert.Equal("Test PC", ad.Name);
+        Assert.DoesNotContain("Token", Encoding.UTF8.GetString(result.Buffer));
     }
 }
