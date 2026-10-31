@@ -1,0 +1,1 @@
+public sealed class Scratch : IDisposable { public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "HomeBridgeTests", Guid.NewGuid().ToString("N")); public Scratch() => Directory.CreateDirectory(Path); public void Dispose() => Directory.Delete(Path, true); }

@@ -32,7 +32,7 @@ dotnet run --project src/HomeBridge.Desktop/HomeBridge.Desktop.csproj
 
 GitHub Actions > **Windows installer** builds a self-contained Win-x64 .NET 10 application and packages it using Inno Setup. Download the `HomeBridge-Windows-Installer` build artifact from a successful run. The installer creates Start Menu shortcuts, optional desktop shortcut, and a normal Add/Remove Programs entry.
 
-Automatic self-updating is **not yet implemented**. Future work should add signed release artifacts, verification and an updater that safely handles running Windows services.
+Native update checking, verified downloads and confirmed installer handoff are implemented; see Automatic updates below. Publisher signing and rollback remain future work.
 
 ## Security
 
@@ -46,7 +46,7 @@ Do not publish previous HomeBridge access tokens, certificate private keys, pair
 4. Background Windows service and per-user interactive agent.
 5. Remote application launching and Roku DLNA media service.
 6. Android pairing/transfer interoperability and hardware-accelerated screen streaming.
-7. Signed installers, automatic update checks, package verification and rollback.
+7. Signed installers and automatic rollback.
 
 Developed for Windows 11; Roku and Android support will be migrated in stages.
 
@@ -58,12 +58,25 @@ The installer registers `HomeBridgeDiscovery` using Windows Service Control Mana
 
 ## Download a native Windows installer
 
-**Latest experimental native preview:** https://github.com/cosmerearchives-creator/HomeBridge/releases/tag/native-preview
-
-**Direct installer:** https://github.com/cosmerearchives-creator/HomeBridge/releases/download/native-preview/HomeBridge-Setup.exe
-
-The Windows installer GitHub Actions workflow uploads its normal artifact and, on successful pushes to `main`, publishes or replaces the downloadable installer asset in the rolling `native-preview` prerelease. Pull requests do not publish releases. For now this is distribution only; automatic in-app updates and installer signing have not been implemented. Browser security prompts may appear for an unsigned installer. Install only if you trust this repository and the build. The native application does not yet include all Python-era modules.
+Get the newest versioned preview from [GitHub Releases](https://github.com/cosmerearchives-creator/HomeBridge/releases). Download its HomeBridge-Setup.exe asset. Unsigned installers may trigger browser and Windows prompts. Branch/PR builds are also available as Actions artifacts. This app does not yet include all Python-era modules.
 
 ## Discovery installer repair
 
 The installer includes the Windows discovery service and its PowerShell registration script. It adds a Windows Firewall inbound rule for UDP 45679 restricted to the Private profile and local subnet. Reinstall HomeBridge on *both* PCs, ensure their networks are Private, and check `HomeBridgeDiscovery` in `services.msc`. The rule is removed on uninstall. Avoid disabling the firewall globally.
+
+
+## Native automatic updates
+
+Install a new installer once to obtain this updater; older discovery previews cannot update themselves. Settings shows the installed version, **Check for updates**, **Download and install update**, and preferences for startup checks and preview releases (both enabled by default). Checks work independently of LAN discovery. Failures are shown in Settings and leave the current installation intact.
+
+Checks use the fixed HomeBridge GitHub Releases API over HTTPS. Semantic version comparison rejects equal or older versions; drafts and optionally prereleases are excluded. The newest of the latest 20 release records is selected. Only this repository's exact HomeBridge-Setup.exe download URL is accepted. The installer must have GitHub's SHA-256 digest and a valid size. Redirects allow only HTTPS GitHub/release-assets hosts; downloads have size and time limits. The downloaded bytes are checked against both size and digest, then held with a read-only file lock through installer launch. Failed downloads are deleted.
+
+You confirm installation before download. The normal installer requests Windows administrator approval, and HomeBridge closes only after successful handoff. Declining elevation leaves the current app running. Save work first: in-session rename undo is lost on exit. Settings and discovery service configuration remain in place. Successful installer files remain under LocalAppData/HomeBridge/Updates; remove them when no installer is running.
+
+GitHub HTTPS and repository ownership are the trust root. The digest protects against corrupted downloads, not a compromised repository. Installers remain unsigned (Windows may show unknown publisher). No silent installation or automatic rollback is provided. Interactive UAC cancellation, installer upgrade and a real two-PC discovery regression should be manually checked before broad distribution.
+
+### Publishing versions
+
+Every successful main build now publishes a separate `v1.0.0-preview.RUN_NUMBER` prerelease instead of replacing the same rolling asset. The embedded application version, installer version and `update.json` metadata agree. The metadata records version, commit, installer name, size and SHA-256; the updater trusts GitHub's independently returned asset digest. Releases stay draft until both assets are uploaded. Branch/PR builds run update tests and upload artifacts without publishing. Only the release job has repository write permission.
+
+For a stable or manually versioned release, set the desktop project Version and installer default MyAppVersion to the same semantic version and push a matching `vVERSION` tag. Tags must match the project version. Existing published versions are never clobbered; publish a new version after a failure or correction. The old native-preview release remains available for historical downloads but is ignored by the semantic-version updater.
