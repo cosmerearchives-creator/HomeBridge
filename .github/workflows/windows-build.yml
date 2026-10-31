@@ -52,7 +52,7 @@ jobs:
           path: artifacts/*
           if-no-files-found: error
   release:
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -76,3 +76,23 @@ jobs:
           # A draft keeps the updater from seeing an incomplete set of assets.
           gh release create "$tag" artifacts/HomeBridge-Setup.exe artifacts/update.json --draft --target "$GITHUB_SHA" --title "HomeBridge $version" --notes "Native .NET 10 build $GITHUB_SHA. Includes verified in-app updates. See README for preview limitations." "${args[@]}"
           gh release edit "$tag" --draft=false
+
+      - name: Refresh permanent Windows installer download
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Never let a slower older build replace the newest download.
+          current=$(gh api "repos/$GH_REPO/commits/main" --jq .sha)
+          if [[ "$current" != "$GITHUB_SHA" ]]; then exit 0; fi
+          version=$(jq -r .version artifacts/update.json)
+          notes="Download HomeBridge-Setup.exe below, run it, then open HomeBridge from Start. This installer includes .NET 10 and in-app update checks. Current version: $version. Versioned release: https://github.com/$GH_REPO/releases/tag/v$version . This is an unsigned Windows preview."
+          if gh release view native-preview >/dev/null 2>&1; then
+            gh release upload native-preview artifacts/HomeBridge-Setup.exe artifacts/update.json --clobber
+            gh release edit native-preview --title "HomeBridge for Windows — Download installer" --notes "$notes" --prerelease
+          else
+            gh release create native-preview artifacts/HomeBridge-Setup.exe artifacts/update.json --target "$GITHUB_SHA" --title "HomeBridge for Windows — Download installer" --notes "$notes" --prerelease
+          fi

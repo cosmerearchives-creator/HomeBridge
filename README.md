@@ -1,5 +1,17 @@
 # HomeBridge — native Windows rebuild
 
+## Download and run HomeBridge
+
+**[Download HomeBridge for Windows (.exe)](https://github.com/cosmerearchives-creator/HomeBridge/releases/download/native-preview/HomeBridge-Setup.exe)**
+
+1. Download and run **HomeBridge-Setup.exe**. No ZIP extraction or separate .NET installation is needed.
+2. Complete Windows administrator approval and installation, then launch **HomeBridge** from the Start menu or the installer's launch option.
+3. HomeBridge checks GitHub Releases for updates when it opens. Use **Settings → Check for updates → Download and install update** to upgrade, or change update preferences there.
+
+[Download page and installation notes](https://github.com/cosmerearchives-creator/HomeBridge/releases/tag/native-preview) · [Version history](https://github.com/cosmerearchives-creator/HomeBridge/releases)
+
+Windows x64 preview; the installer is currently unsigned, so Windows may show an unknown-publisher prompt. Older builds without the updater need this one-time manual installation.
+
 HomeBridge makes useful Windows and local-network tools easier to operate.
 
 **Current status: .NET 10 migration preview (not yet feature-parity with Python v0.5.1).**
@@ -30,7 +42,7 @@ dotnet run --project src/HomeBridge.Desktop/HomeBridge.Desktop.csproj
 
 ## Installer
 
-GitHub Actions > **Windows installer** builds a self-contained Win-x64 .NET 10 application and packages it using Inno Setup. Download the `HomeBridge-Windows-Installer` build artifact from a successful run. The installer creates Start Menu shortcuts, optional desktop shortcut, and a normal Add/Remove Programs entry.
+GitHub Actions > **Windows installer** builds a self-contained Win-x64 .NET 10 application and packages it using Inno Setup. Use the **Download HomeBridge for Windows** link above. Build artifacts are retained for development and diagnostics. The installer creates Start Menu shortcuts, optional desktop shortcut, and a normal Add/Remove Programs entry.
 
 Native update checking, verified downloads and confirmed installer handoff are implemented; see Automatic updates below. Publisher signing and rollback remain future work.
 
@@ -79,4 +91,4 @@ GitHub HTTPS and repository ownership are the trust root. The digest protects ag
 
 Every successful main build now publishes a separate `v1.0.0-preview.RUN_NUMBER` prerelease instead of replacing the same rolling asset. The embedded application version, installer version and `update.json` metadata agree. The metadata records version, commit, installer name, size and SHA-256; the updater trusts GitHub's independently returned asset digest. Releases stay draft until both assets are uploaded. Branch/PR builds run update tests and upload artifacts without publishing. Only the release job has repository write permission.
 
-For a stable or manually versioned release, set the desktop project Version and installer default MyAppVersion to the same semantic version and push a matching `vVERSION` tag. Tags must match the project version. Existing published versions are never clobbered; publish a new version after a failure or correction. The old native-preview release remains available for historical downloads but is ignored by the semantic-version updater.
+For a stable or manually versioned release, set the desktop project Version and installer default MyAppVersion to the same semantic version and push a matching `vVERSION` tag. Tags must match the project version. Existing published versions are never clobbered; publish a new version after a failure or correction. The permanent native-preview download is refreshed only after a complete versioned release is published. The semantic-version updater uses versioned releases, independently of this download alias.
