@@ -1,4 +1,6 @@
 <Solution>
   <Project Path="src/HomeBridge.Desktop/HomeBridge.Desktop.csproj" />
   <Project Path="src/HomeBridge.Service/HomeBridge.Service.csproj" />
+  <Project Path="src/HomeBridge.Core/HomeBridge.Core.csproj" />
+  <Project Path="tests/HomeBridge.Tests/HomeBridge.Tests.csproj" />
 </Solution>

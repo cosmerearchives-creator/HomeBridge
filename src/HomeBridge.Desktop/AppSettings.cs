@@ -6,6 +6,9 @@ namespace HomeBridge.Desktop;
 public sealed class AppSettings
 {
     public string DisplayName { get; set; } = Environment.MachineName;
+    public bool AutomaticUpdateChecks { get; set; } = true;
+    public bool IncludePreviewUpdates { get; set; } = true;
+    public static string DirectoryPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HomeBridge");
     private static string PathName => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HomeBridge", "settings.json");
     public static AppSettings Load()
     {

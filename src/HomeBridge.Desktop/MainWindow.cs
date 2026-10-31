@@ -8,6 +8,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Threading.Tasks;
+using System.Threading;
+using System.Reflection;
+using HomeBridge.Core;
 
 namespace HomeBridge.Desktop;
 
@@ -23,6 +26,15 @@ public sealed class MainWindow : Window
     private IReadOnlyList<RenamePlan> _lastBatch = Array.Empty<RenamePlan>();
     private readonly List<(string Name, string Path)> _apps = new();
     private readonly ListBox _appsList = new();
+
+    private readonly TextBlock _updateStatus = new() { Text = "Updates have not been checked.", TextWrapping = TextWrapping.Wrap };
+    private readonly UpdateClient _updater = new();
+    private readonly SemaphoreSlim _updateGate = new(1);
+    private readonly Button _installUpdate = new() { Content = "Download and install update", IsEnabled = false, Padding = new Thickness(14, 7, 14, 7) };
+    private UpdateRelease? _availableUpdate;
+    private static string CurrentVersion => typeof(App).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion.Split('+')[0];
+
+    private readonly CancellationTokenSource _closing = new();
 
     public MainWindow()
     {
@@ -40,6 +52,8 @@ public sealed class MainWindow : Window
         tabs.Items.Add(Tab("Screen", Pending("Low-latency screen streaming and optional remote input")));
         tabs.Items.Add(Tab("Roku Media", Pending("DLNA background media service")));
         Content = tabs;
+        Closed += (_, _) => { _closing.Cancel(); _updater.Dispose(); };
+        Loaded += async (_, _) => { if (_settings.AutomaticUpdateChecks) await CheckUpdates(true); };
     }
 
     private static TabItem Tab(string header, UIElement content) => new() { Header = header, Content = content };
@@ -131,7 +145,63 @@ public sealed class MainWindow : Window
             MessageBox.Show("Saved. Restart the discovery service to update its advertised name.");
         }));
         panel.Children.Add(Label("This build only discovers PCs. Pairing and remote access remain disabled."));
+        panel.Children.Add(Label("HomeBridge " + CurrentVersion));
+        var automatic = new CheckBox { Content = "Automatically check for updates when HomeBridge opens", IsChecked = _settings.AutomaticUpdateChecks, Margin = new Thickness(0, 14, 0, 8) };
+        var previews = new CheckBox { Content = "Include preview releases", IsChecked = _settings.IncludePreviewUpdates, Margin = new Thickness(0, 0, 0, 8) };
+        panel.Children.Add(automatic); panel.Children.Add(previews);
+        panel.Children.Add(Action("Save update preferences", () => {
+            lock (_settings) {
+                var oldAutomatic = _settings.AutomaticUpdateChecks; var oldPreview = _settings.IncludePreviewUpdates;
+                _settings.AutomaticUpdateChecks = automatic.IsChecked == true; _settings.IncludePreviewUpdates = previews.IsChecked == true;
+                try { _settings.Save(); } catch { _settings.AutomaticUpdateChecks = oldAutomatic; _settings.IncludePreviewUpdates = oldPreview; throw; }
+            }
+            _availableUpdate = null; _installUpdate.IsEnabled = false; _updateStatus.Text = "Update preferences saved.";
+        }));
+        var check = new Button { Content = "Check for updates", Padding = new Thickness(14, 7, 14, 7), Margin = new Thickness(0, 10, 10, 10) };
+        check.Click += async (_, _) => { check.IsEnabled = false; try { await CheckUpdates(false); } finally { check.IsEnabled = true; } };
+        _installUpdate.Click += async (_, _) => await InstallUpdate();
+        panel.Children.Add(Row(check, _installUpdate)); panel.Children.Add(_updateStatus);
+        panel.Children.Add(new TextBlock { Text = "Updates come from the HomeBridge GitHub Releases page. Installation closes HomeBridge and clears in-session rename undo. Windows will ask for administrator approval. Your saved settings and discovery service are kept.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 10, 0, 0) });
         return panel;
+    }
+    private async Task CheckUpdates(bool automatic)
+    {
+        if (!await _updateGate.WaitAsync(0)) return;
+        _installUpdate.IsEnabled = false; _availableUpdate = null;
+        try {
+            _updateStatus.Text = "Checking for updates…";
+            _availableUpdate = await _updater.Check(CurrentVersion, _settings.IncludePreviewUpdates, _closing.Token);
+            _updateStatus.Text = _availableUpdate is null ? "No newer release is available." : $"HomeBridge {_availableUpdate.Tag} is available. Choose Download and install update when ready.";
+            _installUpdate.IsEnabled = _availableUpdate is not null;
+            if (automatic && _availableUpdate is not null && !_closing.IsCancellationRequested)
+                MessageBox.Show(_updateStatus.Text + "\nOpen Settings to install it.", "HomeBridge update available");
+        }
+        catch (Exception ex) { if (!_closing.IsCancellationRequested) _updateStatus.Text = "Could not check for updates. " + ex.Message; }
+        finally { _updateGate.Release(); }
+    }
+    private async Task InstallUpdate()
+    {
+        if (!await _updateGate.WaitAsync(0)) return;
+        var release = _availableUpdate;
+        _installUpdate.IsEnabled = false;
+        try {
+            if (release is null) return;
+            if (MessageBox.Show($"Download and install HomeBridge {release.Tag}? HomeBridge will close, and in-session rename undo will be cleared. Windows will request administrator approval.", "Install update", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
+            _updateStatus.Text = "Downloading and verifying the update…";
+            using var installer = await _updater.Download(release, AppSettings.DirectoryPath, _closing.Token);
+            try {
+                _closing.Token.ThrowIfCancellationRequested();
+                var process = Process.Start(new ProcessStartInfo(installer.Path) {
+                    UseShellExecute = true, Verb = "runas", Arguments = "/SP- /NORESTART",
+                    WorkingDirectory = Path.GetDirectoryName(installer.Path)!
+                }) ?? throw new IOException("The installer could not be started.");
+                process.Dispose(); Close();
+            }
+            catch { installer.Delete(); throw; }
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223) { _updateStatus.Text = "Installation canceled. Your current version is still installed."; }
+        catch (Exception ex) { if (!_closing.IsCancellationRequested) _updateStatus.Text = "Update not installed. " + ex.Message; }
+        finally { if (!_closing.IsCancellationRequested) _installUpdate.IsEnabled = _availableUpdate is not null; _updateGate.Release(); }
     }
     private UIElement DevicesPage()
     {
