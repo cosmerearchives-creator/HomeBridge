@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $name = 'HomeBridgeDiscovery'
-$expectedRoot = Join-Path $env:ProgramFiles 'HomeBridge'
+$expectedRoot = Join-Path $env:ProgramW6432 'HomeBridge'
 if ($PSScriptRoot -ne $expectedRoot) { throw 'Repair requires the Program Files installation.' }
 $exe = Join-Path $PSScriptRoot 'service\HomeBridge.Service.exe'
 $desktop = Join-Path $PSScriptRoot 'HomeBridge.exe'
@@ -12,12 +12,23 @@ $existing = Get-CimInstance Win32_Service -Filter "Name='HomeBridgeDiscovery'"
 if ($existing) {
     if ($existing.PathName -ne $quotedExe) { throw 'An unrelated service uses the HomeBridge discovery name.' }
     if ($existing.State -ne 'Stopped') { Stop-Service -Name $name }
-    & "$env:SystemRoot\System32\sc.exe" config $name start= auto obj= 'NT AUTHORITY\LocalService' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to configure the discovery service.' }
+    $result = Invoke-CimMethod -InputObject $existing -MethodName Change -Arguments @{
+        StartMode = 'Automatic'
+        StartName = 'NT AUTHORITY\LocalService'
+    }
 } else {
-    & "$env:SystemRoot\System32\sc.exe" create $name binPath= ('\"' + $exe + '\"') start= auto obj= 'NT AUTHORITY\LocalService' DisplayName= 'HomeBridge Discovery' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to register the discovery service.' }
+    $result = Invoke-CimMethod -ClassName Win32_Service -MethodName Create -Arguments @{
+        Name = $name
+        DisplayName = 'HomeBridge Discovery'
+        PathName = $quotedExe
+        ServiceType = [byte]16
+        ErrorControl = [byte]1
+        StartMode = 'Automatic'
+        DesktopInteract = $false
+        StartName = 'NT AUTHORITY\LocalService'
+    }
 }
+if ($result.ReturnValue -ne 0) { throw "Discovery service configuration failed: $($result.ReturnValue)." }
 Start-Service -Name $name
 (Get-Service -Name $name).WaitForStatus('Running', [TimeSpan]::FromSeconds(10))
 

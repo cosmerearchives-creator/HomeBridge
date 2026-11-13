@@ -7,11 +7,11 @@ if ((Test-Path -LiteralPath $root) -or (Get-Service HomeBridgeDiscovery -ErrorAc
 $setup = (Resolve-Path -LiteralPath $Installer).Path
 try {
     foreach ($pass in 1, 2) {
-        $process = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-' -WindowStyle Hidden -Wait -PassThru
+        $process = Start-Process -FilePath $setup -ArgumentList ('/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /LOG="{0}"' -f (Join-Path $env:RUNNER_TEMP "homebridge-install-$pass.log")) -WindowStyle Hidden -Wait -PassThru
         if ($process.ExitCode -ne 0) { throw "Installer pass $pass failed with exit code $($process.ExitCode)." }
         $service = Get-CimInstance Win32_Service -Filter "Name='HomeBridgeDiscovery'"
         if ($service.State -ne 'Running' -or $service.StartName -notmatch 'LocalService$') {
-            throw 'HomeBridgeDiscovery must be running as LocalService.'
+            throw "Install pass $pass expected a running LocalService discovery service. State=$($service.State); Account=$($service.StartName); Path=$($service.PathName)."
         }
         foreach ($expected in @(
             @{ Name = 'HomeBridge-Discovery'; Protocol = 'UDP'; Port = '45679'; Program = 'service\HomeBridge.Service.exe' },
@@ -34,6 +34,11 @@ try {
             }
         }
     }
+}
+catch {
+    Get-ChildItem -LiteralPath $env:RUNNER_TEMP -Filter 'homebridge-install-*.log' |
+        ForEach-Object { Get-Content -LiteralPath $_.FullName -Tail 50 }
+    throw
 }
 finally {
     $uninstall = Join-Path $root 'unins000.exe'

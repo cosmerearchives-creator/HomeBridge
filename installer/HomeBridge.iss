@@ -27,7 +27,6 @@ Name: "{autodesktop}\HomeBridge"; Filename: "{app}\HomeBridge.exe"; Tasks: deskt
 [Tasks]
 Name: desktopicon; Description: "Create a desktop shortcut"; Flags: unchecked
 [Run]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install-service.ps1"""; Flags: runhidden waituntilterminated
 Filename: "{app}\HomeBridge.exe"; Description: "Launch HomeBridge"; Flags: nowait postinstall skipifsilent
 
 [Registry]
@@ -102,5 +101,18 @@ begin
       Result := 'An unrelated HomeBridgeDiscovery service exists. Resolve it before upgrading.'
     else if not StopAndWait('HomeBridgeDiscovery') then
       Result := 'The discovery service could not stop. Stop it in Services and retry.';
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var ResultCode: Integer;
+begin
+  if CurStep = ssPostInstall then begin
+    if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+      '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\install-service.ps1') + '"',
+      ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+      RaiseException('Could not launch HomeBridge service setup: ' + SysErrorMessage(ResultCode));
+    if ResultCode <> 0 then
+      RaiseException('HomeBridge service or firewall setup failed with code ' + IntToStr(ResultCode));
   end;
 end;
