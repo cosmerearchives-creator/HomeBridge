@@ -5,7 +5,7 @@ using Xunit;
 
 public sealed class ComparisonTests
 {
-    private sealed class Clock : TimeProvider { public DateTimeOffset Now = DateTimeOffset.UtcNow; public override DateTimeOffset GetUtcNow() => Now; }
+
     [Fact] public void CommitmentsDetectChangedNoncesAndCodesBindRolesAndCertificates()
     {
         var a = RandomNumberGenerator.GetBytes(32); var b = RandomNumberGenerator.GetBytes(32);
@@ -17,12 +17,12 @@ public sealed class ComparisonTests
         Assert.NotEqual(code, PairingComparison.Code(y, x, a, b));
         Assert.NotEqual(code, PairingComparison.Code(x, y, b, a));
     }
-    [Fact] public void PairingWindowExpiresLimitsAttemptsAndSerializesRequests()
+    [Fact] public void PairingWindowRequiresExplicitOpeningAndLimitsConcurrentAttempts()
     {
-        var clock = new Clock(); var window = new NearbyPairingWindow(clock);
+        var window = new NearbyPairingWindow();
         Assert.False(window.TryEnter()); window.Open();
         for (var i = 0; i < 5; i++) { Assert.True(window.TryEnter()); Assert.False(window.TryEnter()); window.Exit(); }
-        Assert.False(window.TryEnter()); window.Open(); clock.Now += TimeSpan.FromMinutes(2); Assert.False(window.TryEnter());
+        Assert.False(window.TryEnter()); window.Open(); Assert.True(window.TryEnter()); window.Exit();
         window.Open(); window.Close(); Assert.False(window.TryEnter());
     }
 }

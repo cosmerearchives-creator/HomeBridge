@@ -32,20 +32,20 @@ public static class PairingComparison
     }
 }
 
-public sealed class NearbyPairingWindow(TimeProvider? clock = null)
+public sealed class NearbyPairingWindow
 {
     private readonly object _gate = new();
-    private readonly TimeProvider _clock = clock ?? TimeProvider.System;
-    private DateTimeOffset _until;
+
+    private bool _open;
     private int _attempts;
     private bool _busy;
-    public void Open() { lock (_gate) { _until = _clock.GetUtcNow().AddMinutes(2); _attempts = 0; } }
-    public void Close() { lock (_gate) _until = DateTimeOffset.MinValue; }
+    public void Open() { lock (_gate) { _open = true; _attempts = 0; } }
+    public void Close() { lock (_gate) _open = false; }
     public bool TryEnter()
     {
         lock (_gate)
         {
-            if (_busy || _clock.GetUtcNow() >= _until || _attempts >= 5) return false;
+            if (_busy || !_open || _attempts >= 5) return false;
             _attempts++; _busy = true; return true;
         }
     }

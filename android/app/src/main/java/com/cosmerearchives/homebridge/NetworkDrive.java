@@ -13,7 +13,7 @@ import jcifs.context.BaseContext;
 import jcifs.smb.NtlmPasswordAuthenticator;
 import jcifs.smb.SmbFile;
 
-final class NetworkDrive implements AutoCloseable {
+final class NetworkDrive implements FileSource {
     record Entry(String name, boolean folder) {}
 
     private final CIFSContext base;
@@ -60,7 +60,7 @@ final class NetworkDrive implements AutoCloseable {
         authenticated = base.withCredentials(new NtlmPasswordAuthenticator(domain, username, password));
     }
 
-    List<Entry> browse(List<String> path) throws Exception {
+    @Override public List<Entry> browse(List<String> path) throws Exception {
         var result = new ArrayList<Entry>();
         try (var folder = new SmbFile(resource(server, path, true), authenticated);
              var children = folder.children()) {
@@ -80,7 +80,7 @@ final class NetworkDrive implements AutoCloseable {
         return result;
     }
 
-    long copy(List<String> path, java.io.OutputStream output, java.util.function.LongConsumer progress) throws Exception {
+    @Override public long copy(List<String> path, java.io.OutputStream output, java.util.function.LongConsumer progress) throws Exception {
         try (var file = new SmbFile(resource(server, path, false), authenticated);
              InputStream input = file.getInputStream()) {
             long expected = file.length();

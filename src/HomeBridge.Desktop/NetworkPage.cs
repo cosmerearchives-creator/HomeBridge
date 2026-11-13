@@ -82,11 +82,11 @@ public sealed partial class MainWindow
         {
             var devices = await Discover();
             _networkStatus.Text = devices.Count == 0 ? "No pairing-capable PCs replied. Open HomeBridge on the other PC and run diagnostics." : "Choose a nearby PC to pair.";
-        }), NetworkAction("Allow pairing for 2 minutes", () =>
+        }), NetworkAction("Allow pairing", () =>
         {
             _network.Start();
             _network.OpenNearbyPairing();
-            _networkStatus.Text = "Ready to pair. Select this PC on the other computer.";
+            _networkStatus.Text = "Ready to pair. Select this PC on the other computer. Use Stop accepting pairing to close pairing.";
             return Task.CompletedTask;
         }), Action("Stop accepting pairing", _network.CloseNearbyPairing)));
         panel.Children.Add(_nearby);

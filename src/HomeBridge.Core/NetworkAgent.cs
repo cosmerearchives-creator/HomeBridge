@@ -18,7 +18,7 @@ public sealed partial class NetworkAgent(StateStore store, UserSettings settings
     public void OpenNearbyPairing()
     {
         if (!Running) throw new InvalidOperationException("Turn on nearby devices first.");
-        CloseNearbyPairing(); _nearbyWindow = new CancellationTokenSource(TimeSpan.FromMinutes(2)); _nearby.Open();
+        CloseNearbyPairing(); _nearbyWindow = new CancellationTokenSource(); _nearby.Open();
     }
     public void CloseNearbyPairing() { _nearby.Close(); _nearbyWindow?.Cancel(); }
     private readonly SemaphoreSlim _slots = new(8);
@@ -89,7 +89,7 @@ public sealed partial class NetworkAgent(StateStore store, UserSettings settings
                     var window = _nearbyWindow;
                     if (window is null || ConfirmNearbyPairing is null || !_nearby.TryEnter()) { await Wire.Write(tls, new Reply(false), ct); return; }
                     try {
-                        timeout.CancelAfter(TimeSpan.FromMinutes(2));
+                        timeout.CancelAfter(Timeout.InfiniteTimeSpan);
                         using var consent = CancellationTokenSource.CreateLinkedTokenSource(ct, window.Token);
                         await AcceptNearby(fingerprint, ((IPEndPoint)client.Client.RemoteEndPoint!).Address.ToString(), message, tls, consent.Token);
                     }
@@ -128,7 +128,9 @@ public sealed partial class NetworkAgent(StateStore store, UserSettings settings
             throw new InvalidDataException("Invalid nearby pairing request.");
         var nonce = RandomNumberGenerator.GetBytes(32);
         await Wire.Write(stream, new PairingChallenge(PairingComparison.Commit(nonce), settings.DeviceName), ct);
-        var reveal = await Wire.Read<PairingReveal>(stream, ct);
+        using var exchange = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        exchange.CancelAfter(TimeSpan.FromSeconds(15));
+        var reveal = await Wire.Read<PairingReveal>(stream, exchange.Token);
         var peerNonce = PairingComparison.Reveal(reveal.Nonce, message.Token);
         await Wire.Write(stream, new PairingReveal(Convert.ToHexString(nonce)), ct);
         var code = PairingComparison.Code(Identity.Fingerprint(identity), peerPin, peerNonce, nonce);
@@ -142,7 +144,7 @@ public sealed partial class NetworkAgent(StateStore store, UserSettings settings
     public async Task PairNearby(DiscoveredDevice device, Func<PairingPrompt, CancellationToken, Task<bool>> confirm, CancellationToken cancel)
     {
         if (!IPAddress.TryParse(device.Address, out var ip) || !LanAddress.IsLocal(ip)) throw new InvalidDataException("Choose a nearby PC.");
-        using var session = CancellationTokenSource.CreateLinkedTokenSource(cancel); session.CancelAfter(TimeSpan.FromMinutes(2));
+        using var session = CancellationTokenSource.CreateLinkedTokenSource(cancel);
         using var client = new TcpClient();
         using (var handshake = CancellationTokenSource.CreateLinkedTokenSource(session.Token)) {
             handshake.CancelAfter(TimeSpan.FromSeconds(8)); await client.ConnectAsync(ip, Port, handshake.Token);
@@ -154,12 +156,14 @@ public sealed partial class NetworkAgent(StateStore store, UserSettings settings
         var ct = session.Token; var nonce = RandomNumberGenerator.GetBytes(32);
         await Wire.Write(tls, new Message("pair-nearby-v1", settings.DeviceName, PairingComparison.Commit(nonce)), ct);
         // A closed pairing window returns the normal refusal instead of a challenge.
-        var challenge = await Wire.Read<System.Text.Json.JsonElement>(tls, ct);
+        using var exchange = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        exchange.CancelAfter(TimeSpan.FromSeconds(15));
+        var challenge = await Wire.Read<System.Text.Json.JsonElement>(tls, exchange.Token);
         if (!challenge.TryGetProperty("Commitment", out var commitment)) throw new AuthenticationException("On the other PC, click Allow pairing, then try again.");
         var name = challenge.GetProperty("Name").GetString();
         if (string.IsNullOrWhiteSpace(name) || name.Length > 80) throw new InvalidDataException("Invalid device name.");
         await Wire.Write(tls, new PairingReveal(Convert.ToHexString(nonce)), ct);
-        var reveal = await Wire.Read<PairingReveal>(tls, ct);
+        var reveal = await Wire.Read<PairingReveal>(tls, exchange.Token);
         var peerNonce = PairingComparison.Reveal(reveal.Nonce, commitment.GetString()!);
         var code = PairingComparison.Code(device.Fingerprint, Identity.Fingerprint(identity), nonce, peerNonce);
         var approved = await confirm(new(name, code), ct);

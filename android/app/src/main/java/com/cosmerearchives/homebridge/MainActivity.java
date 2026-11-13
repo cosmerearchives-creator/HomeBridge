@@ -19,16 +19,17 @@ import java.util.concurrent.Executors;
 
 public final class MainActivity extends Activity {
     private static final int PAPER = 0xfff4efdf, SURFACE = 0xfffcfaf5, INK = 0xff28231e, ACCENT = 0xff685b85;
-    private static final int SAVE_FILE = 1;
+    private static final int SAVE_FILE = 1, UPLOAD_FILES = 2;
     private final java.util.concurrent.ExecutorService worker = Executors.newSingleThreadExecutor();
     private final java.util.SortedSet<String> servers = new java.util.TreeSet<>();
     private LinearLayout directory, serverList;
     private TextView status, breadcrumb;
     private Button connectButton, scanButton, backButton;
     private boolean quest, busy;
+    private volatile java.util.concurrent.CompletableFuture<Boolean> pendingApproval;
     private NsdManager manager;
     private NsdManager.DiscoveryListener discovery;
-    private NetworkDrive drive;
+    private FileSource drive;
     private String host;
     private List<String> path = List.of();
     private List<String> pendingSave;
@@ -92,6 +93,10 @@ public final class MainActivity extends Activity {
         for (var item : new Button[]{connectButton, scanButton, mode})
             toolbar.addView(item, new LinearLayout.LayoutParams(0, -2, 1));
         root.addView(toolbar);
+        var pairedTools = new LinearLayout(this);
+        pairedTools.addView(button("HomeBridge PCs", this::findHomeBridge), new LinearLayout.LayoutParams(0, -2, 1));
+        pairedTools.addView(button("Forget paired PCs", this::forgetHomeBridge), new LinearLayout.LayoutParams(0, -2, 1));
+        root.addView(pairedTools);
         var workspace = new LinearLayout(this);
         boolean wide = getResources().getConfiguration().screenWidthDp >= 640;
         workspace.setOrientation(wide ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
@@ -108,6 +113,7 @@ public final class MainActivity extends Activity {
             if (!path.isEmpty()) browse(List.copyOf(path.subList(0, path.size() - 1)));
         });
         main.addView(backButton);
+        main.addView(button("Upload files", this::selectUploads));
         breadcrumb = label("", 20, true);
         main.addView(breadcrumb);
         directory = column(SURFACE);
@@ -200,6 +206,82 @@ public final class MainActivity extends Activity {
         discovery = null;
     }
 
+    private void forgetHomeBridge() {
+        if (busy) return;
+        var preferences = getPreferences(0);
+        var change = preferences.edit();
+        for (String key : preferences.getAll().keySet()) if (key.startsWith("peer.")) change.remove(key);
+        change.apply();
+        if (drive instanceof PairedDrive) {
+            drive = null;
+            host = null;
+            path = List.of();
+            entries = List.of();
+            renderFiles();
+        }
+        state(false, "Pairing cleared here. Forget this device on the PC to revoke its access there.");
+    }
+
+    private void findHomeBridge() {
+        if (busy) return;
+        state(true, "Looking for HomeBridge PCs…");
+        worker.submit(() -> {
+            try {
+                var devices = PairedDrive.discover();
+                publish(() -> {
+                    state(false, devices.isEmpty() ? "Open HomeBridge on a PC connected to this network." : "Select a HomeBridge PC.");
+                    if (devices.isEmpty()) return;
+                    var names = devices.stream().map(d -> d.name() + " · " + d.address()).toArray(String[]::new);
+                    new AlertDialog.Builder(this).setTitle("HomeBridge PCs")
+                        .setItems(names, (dialog, which) -> openHomeBridge(devices.get(which)))
+                        .setNegativeButton("Cancel", null).show();
+                });
+            } catch (Exception ex) { failed(ex); }
+        });
+    }
+
+    private void openHomeBridge(PairedDrive.Device device) {
+        if (busy) return;
+        state(true, "Connecting to " + device.name() + "…");
+        worker.submit(() -> {
+            try {
+                var candidate = new PairedDrive(device);
+                if (!getPreferences(0).getBoolean("peer." + device.pin(), false)) {
+                    candidate.pair(this::approvePairing);
+                    getPreferences(0).edit().putBoolean("peer." + device.pin(), true).apply();
+                }
+                var listing = candidate.browse(List.of());
+                if (drive != null) try { drive.close(); } catch (Exception ignored) {}
+                drive = candidate;
+                publish(() -> {
+                    host = device.name();
+                    path = List.of();
+                    entries = listing;
+                    renderFiles();
+                    state(false, "Connected to " + device.name());
+                });
+            } catch (Exception ex) {
+                publish(() -> state(false, "Could not open HomeBridge shares. On the PC, enable Allow pairing and confirm the matching code. If trust was revoked, forget paired PCs in the app."));
+            }
+        });
+    }
+
+    private boolean approvePairing(String name, String code) throws Exception {
+        var answer = new java.util.concurrent.CompletableFuture<Boolean>();
+        pendingApproval = answer;
+        try {
+            runOnUiThread(() -> {
+                if (isDestroyed()) { answer.complete(false); return; }
+                new AlertDialog.Builder(this).setTitle("Pair with " + name)
+                    .setMessage("Compare this code on both devices and approve only if they match.\n\n" + code)
+                    .setPositiveButton("Codes match", (dialog, which) -> answer.complete(true))
+                    .setNegativeButton("Cancel", (dialog, which) -> answer.complete(false))
+                    .setOnCancelListener(dialog -> answer.complete(false)).show();
+            });
+            return answer.get();
+        } finally { pendingApproval = null; }
+    }
+
     private void credentials(String suggested) {
         if (busy) return;
         var form = column(SURFACE);
@@ -278,6 +360,10 @@ public final class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == UPLOAD_FILES) {
+            if (result == RESULT_OK && data != null) uploadSelected(data);
+            return;
+        }
         if (request != SAVE_FILE) return;
         var source = pendingSave;
         pendingSave = null;
@@ -306,6 +392,53 @@ public final class MainActivity extends Activity {
         });
     }
 
+    private void selectUploads() {
+        if (busy) return;
+        if (!(drive instanceof PairedDrive paired) || !paired.acceptsUploads(path)) {
+            status.setText("Open a HomeBridge share approved for uploads on the PC.");
+            return;
+        }
+        var intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+            .setType("*/*").putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        try { startActivityForResult(intent, UPLOAD_FILES); }
+        catch (android.content.ActivityNotFoundException ex) { status.setText("This device has no system file picker available."); }
+    }
+
+    private void uploadSelected(Intent data) {
+        if (busy || !(drive instanceof PairedDrive paired) || !paired.acceptsUploads(path)) return;
+        var selected = new ArrayList<Uri>();
+        var clip = data.getClipData();
+        if (clip != null) {
+            for (int i = 0; i < clip.getItemCount(); i++) selected.add(clip.getItemAt(i).getUri());
+        } else if (data.getData() != null) selected.add(data.getData());
+        if (selected.isEmpty()) return;
+        var folder = List.copyOf(path);
+        state(true, "Uploading…");
+        worker.submit(() -> {
+            try {
+                for (Uri uri : selected) {
+                    String[] columns = {android.provider.OpenableColumns.DISPLAY_NAME, android.provider.OpenableColumns.SIZE};
+                    try (var metadata = getContentResolver().query(uri, columns, null, null, null);
+                         var input = getContentResolver().openInputStream(uri)) {
+                        if (metadata == null || !metadata.moveToFirst() || metadata.isNull(1) || input == null)
+                            throw new java.io.IOException("Cannot read the selected file and its size.");
+                        long[] last = {0};
+                        paired.upload(folder, metadata.getString(0), input, metadata.getLong(1), bytes -> {
+                            long now = android.os.SystemClock.elapsedRealtime();
+                            if (now - last[0] < 300) return;
+                            last[0] = now;
+                            publish(() -> status.setText("Uploaded " + (bytes / 1024) + " KB…"));
+                        });
+                    }
+                }
+                var listing = paired.browse(folder);
+                publish(() -> { entries = listing; renderFiles(); state(false, "Upload complete."); });
+            } catch (Exception ex) {
+                publish(() -> state(false, "Upload stopped. Check the share permissions and duplicate names. Completed files are kept."));
+            }
+        });
+    }
+
     private void publish(Runnable update) { runOnUiThread(() -> { if (!isDestroyed()) update.run(); }); }
     private void failed(Exception ex) {
         String message = ex instanceof IllegalArgumentException ? ex.getMessage()
@@ -319,6 +452,8 @@ public final class MainActivity extends Activity {
     }
 
     @Override public void onDestroy() {
+        var approval = pendingApproval;
+        if (approval != null) approval.complete(false);
         stopDiscovery();
         worker.submit(() -> { if (drive != null) try { drive.close(); } catch (Exception ignored) {} });
         worker.shutdown();
