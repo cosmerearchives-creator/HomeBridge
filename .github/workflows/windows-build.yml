@@ -30,7 +30,7 @@ jobs:
         run: dotnet restore HomeBridge.slnx
       - name: Build
         run: dotnet build HomeBridge.slnx -c Release --no-restore
-      - name: Test secure updater
+      - name: Test updater, pairing and file sharing
         run: dotnet test tests/HomeBridge.Tests/HomeBridge.Tests.csproj -c Release --no-build
       - name: Publish standalone executable
         run: dotnet publish src/HomeBridge.Desktop/HomeBridge.Desktop.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o publish -p:Version=${{ env.APP_VERSION }}
@@ -45,6 +45,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Installer compilation failed" }
           $file = Get-Item artifacts/HomeBridge-Setup.exe
           @{ version=$env:APP_VERSION; commit=$env:GITHUB_SHA; sha256=(Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant(); size=$file.Length; asset=$file.Name } | ConvertTo-Json | Set-Content artifacts/update.json -Encoding utf8
+      - name: Verify install, upgrade and uninstall
+        shell: pwsh
+        run: ./tests/InstallerSmoke.ps1 -Installer artifacts/HomeBridge-Setup.exe
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:

@@ -14,10 +14,10 @@ using HomeBridge.Core;
 
 namespace HomeBridge.Desktop;
 
-public sealed class MainWindow : Window
+public sealed partial class MainWindow : Window
 {
     private readonly List<string> _files = new();
-    private readonly AppSettings _settings = AppSettings.Load();
+
     private readonly TextBox _find = new() { MinWidth = 120 };
     private readonly TextBox _replace = new() { MinWidth = 120 };
     private readonly TextBox _prefix = new() { MinWidth = 120 };
@@ -38,6 +38,10 @@ public sealed class MainWindow : Window
 
     public MainWindow()
     {
+        _settings = _store.Load();
+        _identity = Identity.Load(_store);
+        _network = new(_store, _settings, _identity);
+        _network.ConfirmNearbyPairing = (prompt, ct) => PairingDialog.Confirm(this, prompt, ct);
         Title = "HomeBridge — .NET 10 Preview";
         Width = 1050; Height = 720; MinWidth = 740; MinHeight = 530;
         Background = new SolidColorBrush(Color.FromRgb(20, 23, 32));
@@ -48,12 +52,12 @@ public sealed class MainWindow : Window
         tabs.Items.Add(Tab("Application Launcher", AppPage()));
         tabs.Items.Add(Tab("Devices", DevicesPage()));
         tabs.Items.Add(Tab("Settings", SettingsPage()));
-        tabs.Items.Add(Tab("Files", Pending("Authenticated file sharing and transfers")));
+        tabs.Items.Add(Tab("Files", FilesPage()));
         tabs.Items.Add(Tab("Screen", Pending("Low-latency screen streaming and optional remote input")));
         tabs.Items.Add(Tab("Roku Media", Pending("DLNA background media service")));
         Content = tabs;
-        Closed += (_, _) => { _closing.Cancel(); _updater.Dispose(); };
-        Loaded += async (_, _) => { if (_settings.AutomaticUpdateChecks) await CheckUpdates(true); };
+        ConfigureLifetime(tabs);
+        Loaded += async (_, _) => { try { _network.Start(); RefreshPeers(); await Discover(); } catch (Exception ex) { _networkStatus.Text = ex.Message; } if (_settings.AutomaticUpdateChecks) await CheckUpdates(true); };
     }
 
     private static TabItem Tab(string header, UIElement content) => new() { Header = header, Content = content };
@@ -78,7 +82,7 @@ public sealed class MainWindow : Window
     private UIElement Overview() => new StackPanel { Margin = new Thickness(24), Children = {
         new TextBlock { Text = "HomeBridge Native", FontSize = 32, FontWeight = FontWeights.Bold },
         new TextBlock { Text = "C# / .NET 10 / WPF • Early migration build", FontSize = 17, Margin = new Thickness(0, 12, 0, 20) },
-        new TextBlock { Text = "Working today: local file bulk rename and local application launching. The other HomeBridge modules will be migrated progressively. This build does not install or enable network services.", TextWrapping = TextWrapping.Wrap, FontSize = 15 }
+        new TextBlock { Text = "Working today: local file bulk rename and local application launching. The other HomeBridge modules will be migrated progressively. Open Devices to pair with another PC and Files to share or transfer files.", TextWrapping = TextWrapping.Wrap, FontSize = 15 }
     } };
 
     private UIElement RenamePage()
@@ -136,15 +140,16 @@ public sealed class MainWindow : Window
     {
         var panel = new StackPanel { Margin = new Thickness(24) };
         panel.Children.Add(Label("Computer display name"));
-        var name = new TextBox { Text = _settings.DisplayName, MaxWidth = 400, HorizontalAlignment = HorizontalAlignment.Left };
+        var name = new TextBox { Text = _settings.DeviceName, MaxLength = 80, MaxWidth = 400, HorizontalAlignment = HorizontalAlignment.Left };
         panel.Children.Add(name);
         panel.Children.Add(Label("Settings are stored for your Windows account in LocalAppData\\HomeBridge."));
         panel.Children.Add(Action("Save settings", () => {
-            _settings.DisplayName = name.Text.Trim();
-            _settings.Save();
-            MessageBox.Show("Saved. Restart the discovery service to update its advertised name.");
+            if (string.IsNullOrWhiteSpace(name.Text)) throw new InvalidDataException("Enter a computer display name.");
+            _settings.DeviceName = name.Text.Trim();
+            _store.Save(_settings);
+            MessageBox.Show("Saved. Reopen HomeBridge to update its advertised name.");
         }));
-        panel.Children.Add(Label("This build only discovers PCs. Pairing and remote access remain disabled."));
+        panel.Children.Add(Action("Toggle sharing after closing the window", ToggleTraySharing));
         panel.Children.Add(Label("HomeBridge " + CurrentVersion));
         var automatic = new CheckBox { Content = "Automatically check for updates when HomeBridge opens", IsChecked = _settings.AutomaticUpdateChecks, Margin = new Thickness(0, 14, 0, 8) };
         var previews = new CheckBox { Content = "Include preview releases", IsChecked = _settings.IncludePreviewUpdates, Margin = new Thickness(0, 0, 0, 8) };
@@ -153,7 +158,7 @@ public sealed class MainWindow : Window
             lock (_settings) {
                 var oldAutomatic = _settings.AutomaticUpdateChecks; var oldPreview = _settings.IncludePreviewUpdates;
                 _settings.AutomaticUpdateChecks = automatic.IsChecked == true; _settings.IncludePreviewUpdates = previews.IsChecked == true;
-                try { _settings.Save(); } catch { _settings.AutomaticUpdateChecks = oldAutomatic; _settings.IncludePreviewUpdates = oldPreview; throw; }
+                try { _store.Save(_settings); } catch { _settings.AutomaticUpdateChecks = oldAutomatic; _settings.IncludePreviewUpdates = oldPreview; throw; }
             }
             _availableUpdate = null; _installUpdate.IsEnabled = false; _updateStatus.Text = "Update preferences saved.";
         }));
@@ -188,45 +193,20 @@ public sealed class MainWindow : Window
             if (release is null) return;
             if (MessageBox.Show($"Download and install HomeBridge {release.Tag}? HomeBridge will close, and in-session rename undo will be cleared. Windows will request administrator approval.", "Install update", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
             _updateStatus.Text = "Downloading and verifying the update…";
-            using var installer = await _updater.Download(release, AppSettings.DirectoryPath, _closing.Token);
+            using var installer = await _updater.Download(release, _store.DirectoryPath, _closing.Token);
             try {
                 _closing.Token.ThrowIfCancellationRequested();
                 var process = Process.Start(new ProcessStartInfo(installer.Path) {
                     UseShellExecute = true, Verb = "runas", Arguments = "/SP- /NORESTART",
                     WorkingDirectory = Path.GetDirectoryName(installer.Path)!
                 }) ?? throw new IOException("The installer could not be started.");
-                process.Dispose(); Close();
+                process.Dispose(); ExitHomeBridge();
             }
             catch { installer.Delete(); throw; }
         }
         catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223) { _updateStatus.Text = "Installation canceled. Your current version is still installed."; }
         catch (Exception ex) { if (!_closing.IsCancellationRequested) _updateStatus.Text = "Update not installed. " + ex.Message; }
         finally { if (!_closing.IsCancellationRequested) _installUpdate.IsEnabled = _availableUpdate is not null; _updateGate.Release(); }
-    }
-    private UIElement DevicesPage()
-    {
-        var panel = new StackPanel { Margin = new Thickness(24) };
-        panel.Children.Add(Label("Nearby HomeBridge computers — discovery only, not paired"));
-        var results = new ListBox { MinHeight = 250 };
-        panel.Children.Add(Action("Scan network", () => {
-            results.Items.Clear();
-            results.Items.Add("Scanning your local network…");
-            _ = Task.Run(async () => {
-                try {
-                    var computers = await DeviceDiscovery.ScanAsync(TimeSpan.FromSeconds(3));
-                    await Dispatcher.InvokeAsync(() => {
-                        results.Items.Clear();
-                        foreach (var computer in computers) results.Items.Add(computer);
-                        if (computers.Count == 0) results.Items.Add("No devices found. Check the service and Private network firewall.");
-                    });
-                } catch (Exception ex) {
-                    await Dispatcher.InvokeAsync(() => { results.Items.Clear(); results.Items.Add(ex.Message); });
-                }
-            });
-        }));
-        panel.Children.Add(results);
-        panel.Children.Add(Label("No remote commands or files are exposed by discovery. Secure pairing is the next milestone."));
-        return panel;
     }
     private UIElement AppPage()
     {

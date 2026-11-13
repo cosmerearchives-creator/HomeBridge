@@ -8,6 +8,7 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 DefaultDirName={autopf}\HomeBridge
 DefaultGroupName=HomeBridge
+DisableDirPage=yes
 OutputDir=..\artifacts
 OutputBaseFilename=HomeBridge-Setup
 Compression=lzma2
@@ -29,10 +30,26 @@ Name: desktopicon; Description: "Create a desktop shortcut"; Flags: unchecked
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install-service.ps1"""; Flags: runhidden waituntilterminated
 Filename: "{app}\HomeBridge.exe"; Description: "Launch HomeBridge"; Flags: nowait postinstall skipifsilent
 
+[Registry]
+Root: HKLM; Subkey: "Software\Classes\*\shell\HomeBridge.Share"; ValueType: string; ValueData: "Share File with HomeBridge"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\Classes\*\shell\HomeBridge.Share\command"; ValueType: string; ValueData: """{app}\HomeBridge.exe"" --share ""%1"""
+Root: HKLM; Subkey: "Software\Classes\Directory\shell\HomeBridge.Share"; ValueType: string; ValueData: "Share Folder with HomeBridge"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\Classes\Directory\shell\HomeBridge.Share\command"; ValueType: string; ValueData: """{app}\HomeBridge.exe"" --share ""%1"""
+Root: HKLM; Subkey: "Software\Classes\*\shell\HomeBridge.Stop"; ValueType: string; ValueData: "Stop Sharing (HomeBridge)"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\Classes\*\shell\HomeBridge.Stop\command"; ValueType: string; ValueData: """{app}\HomeBridge.exe"" --stop-sharing ""%1"""
+Root: HKLM; Subkey: "Software\Classes\Directory\shell\HomeBridge.Stop"; ValueType: string; ValueData: "Stop Sharing (HomeBridge)"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\Classes\Directory\shell\HomeBridge.Stop\command"; ValueType: string; ValueData: """{app}\HomeBridge.exe"" --stop-sharing ""%1"""
+Root: HKLM; Subkey: "Software\Classes\*\shell\HomeBridge.Send"; ValueType: string; ValueData: "Send to Computer (HomeBridge)"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\Classes\*\shell\HomeBridge.Send\command"; ValueType: string; ValueData: """{app}\HomeBridge.exe"" --send ""%1"""
+Root: HKLM; Subkey: "Software\Classes\Directory\shell\HomeBridge.Send"; ValueType: string; ValueData: "Send to Computer (HomeBridge)"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\Classes\Directory\shell\HomeBridge.Send\command"; ValueType: string; ValueData: """{app}\HomeBridge.exe"" --send ""%1"""
+Root: HKLM; Subkey: "Software\Classes\Directory\Background\shell\HomeBridge.View"; ValueType: string; ValueData: "View Shared Files (HomeBridge)"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\Classes\Directory\Background\shell\HomeBridge.View\command"; ValueType: string; ValueData: """{app}\HomeBridge.exe"" --view-shares"
+
 [UninstallRun]
 Filename: "{sys}\sc.exe"; Parameters: "stop HomeBridgeDiscovery"; Flags: runhidden waituntilterminated
 Filename: "{sys}\sc.exe"; Parameters: "delete HomeBridgeDiscovery"; Flags: runhidden waituntilterminated
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""Get-NetFirewallRule -DisplayName 'HomeBridge Discovery (Private LAN)' -ErrorAction SilentlyContinue | Remove-NetFirewallRule"""; Flags: runhidden waituntilterminated
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""Get-NetFirewallRule -Name 'HomeBridge-Discovery','HomeBridge-PairingDiscovery','HomeBridge-PairedFiles' -ErrorAction SilentlyContinue | Remove-NetFirewallRule"""; Flags: runhidden waituntilterminated
 
 [Code]
 type
@@ -75,6 +92,10 @@ function PrepareToInstall(var NeedsRestart: Boolean): string;
 var Image: string;
 begin
   Result := '';
+  if CompareText(ExpandConstant('{app}'), ExpandConstant('{autopf}\HomeBridge')) <> 0 then begin
+    Result := 'Install HomeBridge in the default Program Files location to protect its service and repair files.';
+    exit;
+  end;
   if RegKeyExists(HKLM, 'SYSTEM\CurrentControlSet\Services\HomeBridgeDiscovery') then begin
     if not RegQueryStringValue(HKLM, 'SYSTEM\CurrentControlSet\Services\HomeBridgeDiscovery', 'ImagePath', Image) or
        (CompareText(Image, '"' + ExpandConstant('{app}\service\HomeBridge.Service.exe') + '"') <> 0) then

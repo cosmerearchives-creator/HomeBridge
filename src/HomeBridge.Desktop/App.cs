@@ -1,4 +1,3 @@
-using System;
 using System.Windows;
 
 namespace HomeBridge.Desktop;
@@ -6,9 +5,18 @@ namespace HomeBridge.Desktop;
 public sealed class App : Application
 {
     [STAThread]
-    public static void Main()
+    public static void Main(string[] args)
     {
-        var app = new App();
-        app.Run(new MainWindow());
+        using var instance = new Mutex(true, @"Local\" + ExplorerCommands.Channel, out var first);
+        var command = ExplorerCommands.Parse(args);
+        if (!first)
+        {
+            try { ExplorerCommands.Forward(command ?? new("activate", null)); }
+            catch (Exception ex) { MessageBox.Show("HomeBridge could not open the existing window. " + ex.Message); }
+            return;
+        }
+        var app = new App { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+        try { app.Run(new MainWindow { StartupCommand = command }); }
+        catch (Exception ex) { MessageBox.Show("HomeBridge could not open. " + ex.Message); }
     }
 }

@@ -2,11 +2,11 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
-    <UseWPF>true</UseWPF>
+    <UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>HomeBridge</AssemblyName>
     <Version>1.0.0-alpha.6</Version>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../HomeBridge.Core/HomeBridge.Core.csproj" /></ItemGroup>
-</Project>
+<ItemGroup><Using Remove="System.Windows.Forms" /><Using Remove="System.Drawing" /></ItemGroup></Project>

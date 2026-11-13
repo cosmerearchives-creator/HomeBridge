@@ -23,8 +23,8 @@ HomeBridge makes useful Windows and local-network tools easier to operate.
 | Local bulk rename | Functional preview, apply, in-session undo; files only |
 | Local application launcher | Functional while app is open; registrations are not persisted |
 | Device discovery | Implemented (local broadcast, unauthenticated device names only)
-| Device pairing | Migration pending |
-| File sharing and transfers | Migration pending |
+| Device pairing | Mutual TLS and matching code approval on both PCs |
+| File sharing and transfers | Explicit shares, browsing, downloads and approved uploads |
 | Screen mirroring and remote control | Migration pending |
 | Roku DLNA server | Migration pending |
 | Android companion | Existing Kotlin prototype remains separate; integration pending |
@@ -66,7 +66,6 @@ Developed for Windows 11; Roku and Android support will be migrated in stages.
 
 The installer registers `HomeBridgeDiscovery` using Windows Service Control Manager. It responds to UDP broadcast requests on port 45679 with the computer name; it has no remote action endpoint. Windows Firewall may block incoming discovery traffic; allow UDP 45679 only on trusted Private profiles as needed. Do not forward this port on your router. You can check the service in `services.msc`.
 
-**Security milestone still pending:** authenticated pairing with unique device credentials and verification codes. Never authorize file or command execution merely because a device appeared in discovery.
 
 ## Download a native Windows installer
 
@@ -92,3 +91,15 @@ GitHub HTTPS and repository ownership are the trust root. The digest protects ag
 Every successful main build now publishes a separate `v1.0.0-preview.RUN_NUMBER` prerelease instead of replacing the same rolling asset. The embedded application version, installer version and `update.json` metadata agree. The metadata records version, commit, installer name, size and SHA-256; the updater trusts GitHub's independently returned asset digest. Releases stay draft until both assets are uploaded. Branch/PR builds run update tests and upload artifacts without publishing. Only the release job has repository write permission.
 
 For a stable or manually versioned release, set the desktop project Version and installer default MyAppVersion to the same semantic version and push a matching `vVERSION` tag. Tags must match the project version. Existing published versions are never clobbered; publish a new version after a failure or correction. The permanent native-preview download is refreshed only after a complete versioned release is published. The semantic-version updater uses versioned releases, independently of this download alias.
+
+## Pair and share files
+
+Install this version on both Windows PCs and open HomeBridge. On a trusted Private network, open **Devices**, select **Allow pairing** on the receiving PC, and select the other PC under **Find nearby PCs** on the sending PC. Select **Pair selected PC**, compare the code, and approve on both screens. Pairing and transfers stay on the LAN. **Forget selected PC** revokes that PC's access from the current computer.
+
+Open **Files** to share specific files or folders. A share grants all currently paired PCs read access. To receive uploads, explicitly choose **Allow uploads to folder**. Select a paired PC and **Open shared files** to browse, download, or upload to an approved destination. Multi-file and folder transfers keep existing files. If a duplicate or network error stops a transfer, completed files remain and unfinished files are discarded where possible. Shared files stay in place when you add or remove a share. Transfers support local fixed drives and skip links and junctions. The file size limit is 10 GiB.
+
+Windows 11 Explorer commands appear under **Show more options**. Send to Computer stages an item in HomeBridge for you to choose the paired PC and upload folder. Use the HomeBridge file picker for selecting multiple files at once.
+
+**Devices → Diagnose** checks the network profile, discovery service, active firewall rules, UDP replies and paired connections. **Diagnose & repair** requests confirmation and Windows administrator approval before restoring HomeBridge's service and Private-network rules. It then repeats the checks. Use the standard Program Files installation for repair.
+
+The Windows discovery service continues operating after HomeBridge exits. Pairing and file sharing run under the signed-in account. Enable the notification-area option in **Settings** to keep sharing after closing the window. Use **Exit HomeBridge** from the notification area to stop sharing. Signing out ends file sharing.
