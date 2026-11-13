@@ -30,6 +30,7 @@ public final class MainActivity extends Activity {
     private NsdManager manager;
     private NsdManager.DiscoveryListener discovery;
     private FileSource drive;
+    private final LocalTools tools = new LocalTools(this);
     private String host;
     private List<String> path = List.of();
     private List<String> pendingSave;
@@ -96,6 +97,7 @@ public final class MainActivity extends Activity {
         var pairedTools = new LinearLayout(this);
         pairedTools.addView(button("HomeBridge PCs", this::findHomeBridge), new LinearLayout.LayoutParams(0, -2, 1));
         pairedTools.addView(button("Forget paired PCs", this::forgetHomeBridge), new LinearLayout.LayoutParams(0, -2, 1));
+        pairedTools.addView(button("Tools", this::showTools), new LinearLayout.LayoutParams(0, -2, 1));
         root.addView(pairedTools);
         var workspace = new LinearLayout(this);
         boolean wide = getResources().getConfiguration().screenWidthDp >= 640;
@@ -360,6 +362,10 @@ public final class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == LocalTools.RENAME) {
+            if (result == RESULT_OK && data != null) tools.rename(data);
+            return;
+        }
         if (request == UPLOAD_FILES) {
             if (result == RESULT_OK && data != null) uploadSelected(data);
             return;
@@ -390,6 +396,18 @@ public final class MainActivity extends Activity {
                 failed(ex);
             }
         });
+    }
+
+    private void showTools() {
+        String[] options = {"Bulk rename", "Undo last rename", "Application launcher", "Find HomeBridge PCs"};
+        new AlertDialog.Builder(this).setTitle("HomeBridge tools").setItems(options,(dialog,index) -> {
+            switch (index) {
+                case 0 -> tools.chooseFiles();
+                case 1 -> tools.undo();
+                case 2 -> tools.launch();
+                case 3 -> findHomeBridge();
+            }
+        }).setNegativeButton("Close",null).show();
     }
 
     private void selectUploads() {
