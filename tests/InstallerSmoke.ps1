@@ -13,6 +13,17 @@ try {
         if ($service.State -ne 'Running' -or $service.StartName -notmatch 'LocalService$') {
             throw "Install pass $pass expected a running LocalService discovery service. State=$($service.State); Account=$($service.StartName); Path=$($service.PathName)."
         }
+        $exe = Join-Path $root 'service\HomeBridge.Service.exe'
+        if ($service.PathName -ne ('"' + $exe + '"')) {
+            throw "Install pass $pass did not register the exact quoted executable path."
+        }
+        if ($pass -eq 1) {
+            # Reproduce older installs that stored the same executable without quotes.
+            $result = Invoke-CimMethod -InputObject $service -MethodName Change -Arguments @{ PathName = $exe }
+            if ($result.ReturnValue -ne 0) { throw "Could not seed the legacy service path: $($result.ReturnValue)." }
+            $legacy = Get-CimInstance Win32_Service -Filter "Name='HomeBridgeDiscovery'"
+            if ($legacy.PathName -ne $exe) { throw 'Legacy service path was not saved unquoted.' }
+        }
         foreach ($expected in @(
             @{ Name = 'HomeBridge-Discovery'; Protocol = 'UDP'; Port = '45679'; Program = 'service\HomeBridge.Service.exe' },
             @{ Name = 'HomeBridge-PairingDiscovery'; Protocol = 'UDP'; Port = '45871'; Program = 'HomeBridge.exe' },

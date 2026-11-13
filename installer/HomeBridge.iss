@@ -88,7 +88,7 @@ begin
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): string;
-var Image: string;
+var Image, ExpectedImage: string;
 begin
   Result := '';
   if CompareText(ExpandConstant('{app}'), ExpandConstant('{autopf}\HomeBridge')) <> 0 then begin
@@ -96,8 +96,9 @@ begin
     exit;
   end;
   if RegKeyExists(HKLM, 'SYSTEM\CurrentControlSet\Services\HomeBridgeDiscovery') then begin
+    ExpectedImage := ExpandConstant('{app}\service\HomeBridge.Service.exe');
     if not RegQueryStringValue(HKLM, 'SYSTEM\CurrentControlSet\Services\HomeBridgeDiscovery', 'ImagePath', Image) or
-       (CompareText(Image, '"' + ExpandConstant('{app}\service\HomeBridge.Service.exe') + '"') <> 0) then
+       ((CompareText(Image, ExpectedImage) <> 0) and (CompareText(Image, '"' + ExpectedImage + '"') <> 0)) then
       Result := 'An unrelated HomeBridgeDiscovery service exists. Resolve it before upgrading.'
     else if not StopAndWait('HomeBridgeDiscovery') then
       Result := 'The discovery service could not stop. Stop it in Services and retry.';

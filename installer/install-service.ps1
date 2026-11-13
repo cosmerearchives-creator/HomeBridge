@@ -10,9 +10,10 @@ if (-not (Test-Path -LiteralPath $exe) -or -not (Test-Path -LiteralPath $desktop
 $quotedExe = '"' + $exe + '"'
 $existing = Get-CimInstance Win32_Service -Filter "Name='HomeBridgeDiscovery'"
 if ($existing) {
-    if ($existing.PathName -ne $quotedExe) { throw 'An unrelated service uses the HomeBridge discovery name.' }
+    if ($existing.PathName -ne $quotedExe -and $existing.PathName -ne $exe) { throw 'An unrelated service uses the HomeBridge discovery name.' }
     if ($existing.State -ne 'Stopped') { Stop-Service -Name $name }
     $result = Invoke-CimMethod -InputObject $existing -MethodName Change -Arguments @{
+        PathName = $quotedExe
         StartMode = 'Automatic'
         StartName = 'NT AUTHORITY\LocalService'
     }
