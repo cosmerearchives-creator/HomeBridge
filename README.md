@@ -27,7 +27,7 @@ HomeBridge makes useful Windows and local-network tools easier to operate.
 | File sharing and transfers | Explicit shares, browsing, downloads and approved uploads |
 | Screen mirroring and remote control | Migration pending |
 | Roku DLNA server | Migration pending |
-| Android companion | Existing Kotlin prototype remains separate; integration pending |
+| Android and Meta Quest | SMB network file explorer and Quest panel layout |
 
 The installer now registers HomeBridgeDiscovery, a minimal Windows service that responds to local discovery requests. It does not expose files, remote execution, pairing, or any management API. Discovery is informational only and must not be treated as authenticated identity. The GUI saves user settings in LocalAppData.
 
@@ -103,3 +103,12 @@ Windows 11 Explorer commands appear under **Show more options**. Send to Compute
 **Devices → Diagnose** checks the network profile, discovery service, active firewall rules, UDP replies and paired connections. **Diagnose & repair** requests confirmation and Windows administrator approval before restoring HomeBridge's service and Private-network rules. It then repeats the checks. Use the standard Program Files installation for repair.
 
 The Windows discovery service continues operating after HomeBridge exits. Pairing and file sharing run under the signed-in account. Enable the notification-area option in **Settings** to keep sharing after closing the window. Use **Exit HomeBridge** from the notification area to stop sharing. Signing out ends file sharing.
+
+
+## Android and Meta Quest
+
+Download HomeBridge-Android.apk from the newest Android preview on the [Releases page](https://github.com/cosmerearchives-creator/HomeBridge/releases). Android previews use CI debug signing. If a later APK reports a signing mismatch, uninstall the previous preview before sideloading. For Quest development installs, use adb install with the APK and open HomeBridge from Unknown Sources.
+
+Find drives discovers servers advertising SMB through DNS-SD. Some Windows PCs and NAS devices do not advertise this service. Use Connect with a hostname or IPv4 address and, if needed, the share name. Browse folders and save files through the device's system file picker. The server account controls access. HomeBridge keeps credentials in memory for the current session. The explorer uses signed SMB 2/3 sessions and does not use HomeBridge's Windows pairing protocol. A Windows folder shared only in the HomeBridge Files tab must be separately shared through Windows SMB to appear here.
+
+Quest mode uses larger controls and text in a resizable Horizon OS panel. It is selected automatically on Quest and can be toggled from the toolbar. The app uses the Archives of Arcanum palette and workspace layout on Android, Quest, and Windows.

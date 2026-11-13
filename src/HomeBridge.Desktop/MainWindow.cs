@@ -42,20 +42,37 @@ public sealed partial class MainWindow : Window
         _identity = Identity.Load(_store);
         _network = new(_store, _settings, _identity);
         _network.ConfirmNearbyPairing = (prompt, ct) => PairingDialog.Confirm(this, prompt, ct);
-        Title = "HomeBridge — .NET 10 Preview";
-        Width = 1050; Height = 720; MinWidth = 740; MinHeight = 530;
-        Background = new SolidColorBrush(Color.FromRgb(20, 23, 32));
-        Foreground = Brushes.White;
-        var tabs = new TabControl { Margin = new Thickness(16) };
+        Title = "HomeBridge";
+        Width = 1150;
+        Height = 780;
+        MinWidth = 760;
+        MinHeight = 540;
+        SetResourceReference(BackgroundProperty, "Paper");
+        SetResourceReference(ForegroundProperty, "Ink");
+        FontFamily = new FontFamily("Segoe UI");
+        FontSize = 14;
+        var tabs = new TabControl();
         tabs.Items.Add(Tab("Overview", Overview()));
+        tabs.Items.Add(Tab("Devices", DevicesPage()));
+        tabs.Items.Add(Tab("Files", FilesPage()));
         tabs.Items.Add(Tab("Bulk Rename", RenamePage()));
         tabs.Items.Add(Tab("Application Launcher", AppPage()));
-        tabs.Items.Add(Tab("Devices", DevicesPage()));
         tabs.Items.Add(Tab("Settings", SettingsPage()));
-        tabs.Items.Add(Tab("Files", FilesPage()));
-        tabs.Items.Add(Tab("Screen", Pending("Low-latency screen streaming and optional remote input")));
-        tabs.Items.Add(Tab("Roku Media", Pending("DLNA background media service")));
-        Content = tabs;
+
+        var shell = new DockPanel();
+        var header = new DockPanel { LastChildFill = false, Margin = new Thickness(24, 12, 24, 12) };
+        var brand = new TextBlock { Text = "HomeBridge", FontFamily = new FontFamily("Georgia"), FontSize = 32 };
+        header.Children.Add(brand);
+        var version = new TextBlock { Text = CurrentVersion, VerticalAlignment = VerticalAlignment.Center };
+        DockPanel.SetDock(version, Dock.Right);
+        header.Children.Add(version);
+        var masthead = new Border { Child = header, BorderThickness = new Thickness(0, 0, 0, 1) };
+        masthead.SetResourceReference(Border.BackgroundProperty, "Surface");
+        masthead.SetResourceReference(Border.BorderBrushProperty, "Line");
+        DockPanel.SetDock(masthead, Dock.Top);
+        shell.Children.Add(masthead);
+        shell.Children.Add(tabs);
+        Content = shell;
         ConfigureLifetime(tabs);
         Loaded += async (_, _) => { try { _network.Start(); RefreshPeers(); await Discover(); } catch (Exception ex) { _networkStatus.Text = ex.Message; } if (_settings.AutomaticUpdateChecks) await CheckUpdates(true); };
     }
@@ -68,21 +85,16 @@ public sealed partial class MainWindow : Window
         button.Click += (_, _) => { try { action(); } catch (Exception ex) { MessageBox.Show(ex.Message, "HomeBridge", MessageBoxButton.OK, MessageBoxImage.Warning); } };
         return button;
     }
-    private static StackPanel Row(params UIElement[] items)
+    private static WrapPanel Row(params UIElement[] items)
     {
-        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        var row = new WrapPanel();
         foreach (var item in items) row.Children.Add(item);
         return row;
     }
-    private static UIElement Pending(string feature) =>
-        new StackPanel { Margin = new Thickness(24), Children = {
-            new TextBlock { Text = feature, FontSize = 22, Margin = new Thickness(0, 0, 0, 16) },
-            new TextBlock { Text = "Migration pending. This feature is available only in the legacy HomeBridge prototype for now.", TextWrapping = TextWrapping.Wrap }
-        } };
-    private UIElement Overview() => new StackPanel { Margin = new Thickness(24), Children = {
-        new TextBlock { Text = "HomeBridge Native", FontSize = 32, FontWeight = FontWeights.Bold },
-        new TextBlock { Text = "C# / .NET 10 / WPF • Early migration build", FontSize = 17, Margin = new Thickness(0, 12, 0, 20) },
-        new TextBlock { Text = "Working today: local file bulk rename and local application launching. The other HomeBridge modules will be migrated progressively. Open Devices to pair with another PC and Files to share or transfer files.", TextWrapping = TextWrapping.Wrap, FontSize = 15 }
+    private UIElement Overview() => new StackPanel { Margin = new Thickness(28), Children = {
+        new TextBlock { Text = "Your local workspace", FontFamily = new FontFamily("Georgia"), FontSize = 32, Margin = new Thickness(0, 0, 0, 14) },
+        new TextBlock { Text = "Pair another computer in Devices, then open Files to browse shared folders and transfer files on your network.", TextWrapping = TextWrapping.Wrap, FontSize = 16 },
+        new TextBlock { Text = "Use Bulk Rename to preview changes before renaming files, or open Application Launcher to start a local program.", TextWrapping = TextWrapping.Wrap, FontSize = 16, Margin = new Thickness(0, 12, 0, 0) }
     } };
 
     private UIElement RenamePage()

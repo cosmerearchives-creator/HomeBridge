@@ -16,7 +16,11 @@ public sealed class App : Application
             return;
         }
         var app = new App { ShutdownMode = ShutdownMode.OnExplicitShutdown };
-        try { app.Run(new MainWindow { StartupCommand = command }); }
+        try
+        {
+            app.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("Arcanum.xaml", UriKind.Relative) });
+            app.Run(new MainWindow { StartupCommand = command });
+        }
         catch (Exception ex) { MessageBox.Show("HomeBridge could not open. " + ex.Message); }
     }
 }
